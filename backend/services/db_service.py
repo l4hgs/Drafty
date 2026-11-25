@@ -157,6 +157,25 @@ def _row_to_idea_container(row: dict) -> IdeaContainer:
     )
 
 
+def _get_recent_scheduled_dates(user_id: str) -> list[str]:
+    res = (
+        _db()
+        .table("content_containers")
+        .select("schedule")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(15)
+        .execute()
+    )
+    dates: set[str] = set()
+    for row in res.data or []:
+        sched = row.get("schedule") or {}
+        d = sched.get("recommended_date")
+        if isinstance(d, str) and d.strip():
+            dates.add(d.strip())
+    return sorted(dates)
+
+
 def _list_user_containers(user_id: str) -> list[IdeaContainer]:
     res = (
         _db()
@@ -291,6 +310,13 @@ async def get_brand_voice(user_id: str) -> str | None:
         return await _run(_get_brand_voice, user_id)
     except DatabaseError:
         return None
+
+
+async def get_recent_scheduled_dates(user_id: str) -> list[str]:
+    try:
+        return await _run(_get_recent_scheduled_dates, user_id)
+    except DatabaseError:
+        return []
 
 
 async def sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | None = None) -> dict:

@@ -1,8 +1,8 @@
 # **Drafty. — Week 3 Mobile Computing & Latency Evaluation Report**
 
 **Date:** November 8, 2026  
-**Reference:** [`BRD.md`](file:///C:/Users/alodi/OneDrive/Desktop/Drafty/docs/BRD.md) (Sections 5 & 7) & [`Implementation.md`](file:///C:/Users/alodi/OneDrive/Desktop/Drafty/docs/Implementation.md) (Week 3)  
-**Benchmark Runner:** [`backend/tests/benchmark_week3.py`](file:///C:/Users/alodi/OneDrive/Desktop/Drafty/backend/tests/benchmark_week3.py)
+**Reference:** [`BRD.md`](BRD.md) (Sections 5 & 7) & [`Implementation.md`](Implementation.md) (Week 3)  
+**Benchmark Runner:** [`backend/tests/benchmark_week3.py`](../backend/tests/benchmark_week3.py)
 
 ---
 
@@ -58,7 +58,7 @@
 
 ## **4. Wi-Fi $\leftrightarrow$ Cellular Mid-Upload Handover Stress Test (10 Trials)**
 
-Simulated mid-upload link drops triggered while transmitting `.m4a` voice memos. [`OfflineQueueManager.kt`](file:///C:/Users/alodi/OneDrive/Desktop/Drafty/android/app/src/main/java/com/cs312/drafty/core/network/OfflineQueueManager.kt) catches the `IOException`, persists the recording in `pending_voice_notes`, and automatically flushes the queue upon `ConnectivityManager.NetworkCallback.onAvailable()`.
+Simulated mid-upload link drops triggered while transmitting `.m4a` voice memos. [`OfflineQueueManager.kt`](../android/app/src/main/java/com/cs312/drafty/core/network/OfflineQueueManager.kt) catches the `IOException`, persists the recording in `pending_voice_notes`, and automatically flushes the queue upon `ConnectivityManager.NetworkCallback.onAvailable()`.
 
 | Trial | Link Transition | Interrupted At | Room Queue Transition | Handover Gap | Auto-Recovery Time | Session & Audio Preserved |
 | :---: | :--- | :---: | :---: | :---: | :---: | :---: |
