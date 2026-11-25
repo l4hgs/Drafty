@@ -40,12 +40,12 @@ Drafty is a custom `24×24` 1-bit monochrome pixel companion rendered with neare
 
 | `IDLE · READY` | `LISTENING · HOLD TO TALK` | `THINKING · STRUCTURING` |
 | :---: | :---: | :---: |
-| <img src="docs/assets/mascot/drafty_idle.png" alt="Drafty Idle" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_listening.png" alt="Drafty Listening" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_thinking.png" alt="Drafty Thinking" width="96" height="96" /> |
+| <img src="docs/assets/mascot/drafty_idle_white_bg.png" alt="Drafty Idle" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_listening_white_bg.png" alt="Drafty Listening" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_thinking_white_bg.png" alt="Drafty Thinking" width="96" height="96" /> |
 | Gentle hover & periodic blink on the Home dock, ready to capture your next idea. | Press & hold Drafty to record with a voice-reactive RGB liquid-glass edge wave & live waveform. | Whisper transcribes your memo while GPT-4o mini structures hooks, script, shots & schedule. |
 
 </div>
 
-> Once saved or synced to **Drafted**, Drafty switches to `CELEBRATING` (<img src="docs/assets/mascot/drafty_celebrating.png" alt="Drafty Celebrating" width="22" height="22" align="absmiddle" />) with a crisp pixel sparkle and checkmark.
+> Once saved or synced to **Drafted**, Drafty switches to `CELEBRATING` (<img src="docs/assets/mascot/drafty_celebrating_white_bg.png" alt="Drafty Celebrating" width="22" height="22" align="absmiddle" />) with a crisp pixel sparkle and checkmark.
 
 ---
 
