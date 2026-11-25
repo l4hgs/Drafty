@@ -31,6 +31,7 @@ from models import (
 from services import db_service
 from services.ai_service import (
     AIService,
+    ContentSafetyError,
     EmptyTranscriptError,
     ParsingError,
     TranscriptionError,
@@ -224,6 +225,12 @@ async def transcribe_and_parse(
         parsed = await parse_task
         container = IdeaContainer(**parsed.model_dump(), draft_id=UUID(draft_id))
         await db_service.save_content_container(draft_id, user_id, container)
+    except ContentSafetyError as exc:
+        try:
+            await db_service.mark_draft_failed(draft_id)
+        except Exception:
+            pass
+        raise api_error(422, "CONTENT_BLOCKED", str(exc))
     except ParsingError:
         try:
             await db_service.mark_draft_failed(draft_id)
@@ -284,6 +291,8 @@ async def regenerate_hooks(
     try:
         hooks = await ai.regenerate_hooks(payload)
         return RegenerateHooksResponse(hook_options=hooks)
+    except ContentSafetyError as exc:
+        raise api_error(422, "CONTENT_BLOCKED", str(exc))
     except ParsingError:
         raise api_error(502, "PARSE_FAILED", "Could not regenerate hooks right now.")
 

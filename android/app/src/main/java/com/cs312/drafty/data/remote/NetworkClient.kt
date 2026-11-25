@@ -95,6 +95,7 @@ object NetworkClient {
         Log.e("NetworkClient", "HTTP ${e.code()} body=$raw")
         val parsed = parseErrorBody(raw)
         return when (parsed?.code) {
+            "CONTENT_BLOCKED" -> "Drafty can't draft content that may be harmful or unsafe. Please try a different idea."
             "NO_SPEECH" -> "We couldn't hear any speech. Hold Drafty and speak clearly into your mic."
             "AUDIO_TOO_SHORT" -> "That recording was too short. Hold Drafty and share a few more words."
             "AUDIO_TOO_LARGE" -> "That recording is a bit too long. Try keeping it under a few minutes."
