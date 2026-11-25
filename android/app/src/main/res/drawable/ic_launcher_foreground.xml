@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 24x24 Finder-style ':' + ')' pixel smiley scaled 2.5x inside safe zone (24..84) -->
+    <path
+        android:fillColor="#111111"
+        android:pathData="M56.5,34h5v2.5h-5zM61.5,36.5h5v2.5h-5zM64,39h5v2.5h-5zM66.5,41.5h5v5h-5zM69,46.5h5v15h-5zM66.5,61.5h5v5h-5zM64,66.5h5v2.5h-5zM61.5,69h5v2.5h-5zM56.5,71.5h5v2.5h-5zM36.5,39h5v10h-5zM51.5,39h5v10h-5zM36.5,59h5v2.5h-5zM51.5,59h5v2.5h-5zM39,61.5h15v5h-15z" />
+</vector>

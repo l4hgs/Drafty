@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Drafty: 1. Start FastAPI Backend (Port 8000)",
+      "type": "shell",
+      "command": ".\\backend\\venv\\Scripts\\python.exe -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Drafty: 2. Build, Install & Launch on Emulator",
+      "type": "shell",
+      "command": "& \"$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe\" reverse tcp:8000 tcp:8000; Set-Location \"${workspaceFolder}\\android\"; .\\gradlew.bat :app:installDebug --console=plain; & \"$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe\" shell am start -n com.cs312.drafty/.MainActivity",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Drafty: Run Backend Unit Tests",
+      "type": "shell",
+      "command": ".\\backend\\venv\\Scripts\\python.exe -m unittest backend/tests/test_voice_api.py -v",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

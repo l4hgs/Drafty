@@ -1,0 +1,46 @@
+# Environment variables & secrets (NEVER commit)
+.env
+*.env
+.env.*
+!.env.example
+!backend/.env.example
+backend/.env
+
+# Signing keys & credentials
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+
+# Python virtual environments & cache
+venv/
+.venv/
+backend/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Android / Gradle build artifacts & local config
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+
+# IDE, OS & logs
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
