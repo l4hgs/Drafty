@@ -22,7 +22,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,6 +66,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cs312.drafty.data.remote.IdeaContainer
 import com.cs312.drafty.ui.DraftyViewModel
@@ -217,8 +220,18 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
         label = "tabPatchSecondary",
     )
 
+    val tabAccent by animateColorAsState(
+        targetValue = when (tab) {
+            0 -> Color(0xFF3B6790) // Script — Muted Steel Blue
+            1 -> Color(0xFF9B4A55) // Creatives — Muted Dusty Rose
+            else -> Color(0xFF3B6E57) // Schedule — Muted Forest Sage
+        },
+        animationSpec = tween(380),
+        label = "tabAccent",
+    )
+
     Box(Modifier.fillMaxSize().background(AppBackground)) {
-        // Soft ambient color patches behind the container cards (Blue / Red / Green per tab)
+        // Richer soft ambient color patches behind the container cards (Blue / Red / Green per tab)
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -228,42 +241,42 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        patchPrimary.copy(alpha = 0.24f),
-                        patchPrimary.copy(alpha = 0.08f),
+                        patchPrimary.copy(alpha = 0.34f),
+                        patchPrimary.copy(alpha = 0.12f),
                         Color.Transparent,
                     ),
                     center = Offset(w * 0.86f, h * 0.14f),
-                    radius = w * 0.68f,
+                    radius = w * 0.72f,
                 ),
-                radius = w * 0.68f,
+                radius = w * 0.72f,
                 center = Offset(w * 0.86f, h * 0.14f),
             )
             // Mid-left soft color patch
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        patchSecondary.copy(alpha = 0.22f),
-                        patchSecondary.copy(alpha = 0.07f),
+                        patchSecondary.copy(alpha = 0.30f),
+                        patchSecondary.copy(alpha = 0.10f),
                         Color.Transparent,
                     ),
-                    center = Offset(w * 0.12f, h * 0.56f),
-                    radius = w * 0.64f,
+                    center = Offset(w * 0.10f, h * 0.56f),
+                    radius = w * 0.68f,
                 ),
-                radius = w * 0.64f,
-                center = Offset(w * 0.12f, h * 0.56f),
+                radius = w * 0.68f,
+                center = Offset(w * 0.10f, h * 0.56f),
             )
             // Bottom-right soft color patch behind the floating glass dock
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        patchPrimary.copy(alpha = 0.26f),
-                        patchSecondary.copy(alpha = 0.10f),
+                        patchPrimary.copy(alpha = 0.36f),
+                        patchSecondary.copy(alpha = 0.14f),
                         Color.Transparent,
                     ),
                     center = Offset(w * 0.82f, h * 0.92f),
-                    radius = w * 0.72f,
+                    radius = w * 0.76f,
                 ),
-                radius = w * 0.72f,
+                radius = w * 0.76f,
                 center = Offset(w * 0.82f, h * 0.92f),
             )
         }
@@ -282,7 +295,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 TitleCard(idea, editing, draftTitle) { draftTitle = it }
-                TabRow(tab) { tab = it }
+                TabRow(tab, activeColor = tabAccent) { tab = it }
 
                 when (tab) {
                     0 -> ScriptTab(
@@ -492,24 +505,28 @@ private fun TitleCard(idea: IdeaContainer, editing: Boolean, draftTitle: String,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             platforms.forEach { PlatformLogoBadge(platform = it, size = 26.dp) }
-            SoftChip(text = idea.metadata.contentPillar, fillColor = SoftWell)
+            SoftChip(
+                text = idea.metadata.contentPillar,
+                fillColor = Color(0xFFEAE8F2),
+                textColor = Color(0xFF4E4668),
+            )
         }
     }
 }
 
 @Composable
-private fun TabRow(selected: Int, onSelect: (Int) -> Unit) {
+private fun TabRow(selected: Int, activeColor: Color, onSelect: (Int) -> Unit) {
     val trackShape = RoundedCornerShape(20.dp)
     val selectedTabBrush = Brush.linearGradient(
-        listOf(Color(0xBAFFFFFF), Color(0x6BFFFFFF), Color(0x96FFFFFF)),
+        listOf(Color(0xEBFFFFFF), Color(0xCCFFFFFF), Color(0xE0FFFFFF)),
     )
     Row(
         Modifier
             .fillMaxWidth()
             .shadow(4.dp, trackShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot)
             .clip(trackShape)
-            .background(Color(0x52FFFFFF))
-            .border(1.dp, Color(0xCCFFFFFF), trackShape)
+            .background(Color(0x70FFFFFF))
+            .border(1.dp, Color(0xD9FFFFFF), trackShape)
             .padding(4.dp),
     ) {
         TabTitles.forEachIndexed { i, title ->
@@ -536,7 +553,7 @@ private fun TabRow(selected: Int, onSelect: (Int) -> Unit) {
                     title,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (isSel) InkBlack else MutedGray,
+                    color = if (isSel) activeColor else MutedGray,
                 )
             }
         }
@@ -565,6 +582,10 @@ private fun ScriptTab(
     onRegenerateHooks: () -> Unit,
     onCopyScript: () -> Unit,
 ) {
+    val scriptAccent = Color(0xFF3B6790)
+    val scriptWell = Color(0xFFE9EFF5)
+    val scriptPill = Color(0xFFDFE8F0)
+
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
         Row(
             Modifier.fillMaxWidth(),
@@ -576,7 +597,7 @@ private fun ScriptTab(
                 onClick = onRegenerateHooks,
                 enabled = !regeneratingHooks,
                 shape = PillShape,
-                color = SoftWell,
+                color = scriptPill,
             ) {
                 Row(
                     Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -584,15 +605,15 @@ private fun ScriptTab(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     if (regeneratingHooks) {
-                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.6.dp, color = InkBlack)
+                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.6.dp, color = scriptAccent)
                     } else {
-                        PixelSparkleIcon(tint = InkBlack, size = 12.dp)
+                        PixelSparkleIcon(tint = scriptAccent, size = 12.dp)
                     }
                     Text(
                         text = if (regeneratingHooks) "Refreshing…" else "Regenerate",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = InkBlack,
+                        color = scriptAccent,
                     )
                 }
             }
@@ -601,7 +622,7 @@ private fun ScriptTab(
             idea.assets.hookOptions.forEachIndexed { i, hook ->
                 Surface(
                     shape = InnerTileShape,
-                    color = SoftWell,
+                    color = scriptWell,
                     border = null,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -609,7 +630,8 @@ private fun ScriptTab(
                         Text(
                             "${i + 1}.",
                             style = MaterialTheme.typography.labelLarge,
-                            color = MutedGray,
+                            fontWeight = FontWeight.SemiBold,
+                            color = scriptAccent,
                             modifier = Modifier.padding(end = 10.dp, top = 1.dp),
                         )
                         Text(hook, style = MaterialTheme.typography.bodyMedium, color = InkBlack)
@@ -681,7 +703,8 @@ private fun ScriptTab(
             Text(
                 idea.assets.hashtags.joinToString("  "),
                 style = MaterialTheme.typography.bodySmall,
-                color = MutedGray,
+                fontWeight = FontWeight.Medium,
+                color = scriptAccent,
                 modifier = Modifier.padding(top = 14.dp),
             )
         }
@@ -691,11 +714,16 @@ private fun ScriptTab(
 @Composable
 private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
     val cd = idea.creativeDirection
+    val creativeAccent = Color(0xFF9B4A55)
+    val creativeWell = Color(0xFFF3EAEB)
+    val creativePill = Color(0xFFEBDDDF)
+
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
         Text("Visual Style", style = MaterialTheme.typography.labelMedium, color = MutedGray)
         SoftChip(
             text = cd.visualType,
-            fillColor = SoftWell,
+            fillColor = creativePill,
+            textColor = creativeAccent,
             modifier = Modifier.padding(top = 8.dp),
         )
         Row(
@@ -730,13 +758,13 @@ private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
             cd.shotList.forEachIndexed { i, shot ->
                 Surface(
                     shape = InnerTileShape,
-                    color = SoftWell,
+                    color = creativeWell,
                     border = null,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
                         Box(
-                            Modifier.size(24.dp).background(InkBlack, CircleShape),
+                            Modifier.size(24.dp).background(creativeAccent, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text("${i + 1}", style = MaterialTheme.typography.labelSmall, color = CardSurface)
@@ -809,25 +837,31 @@ private fun ScheduleTab(
     }
 
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             InfoTile(
                 label = "Date",
-                value = formatDate(s.recommendedDate, "MMM d, yyyy"),
+                value = formatDate(s.recommendedDate, "MMM d"),
                 editable = true,
-                modifier = Modifier.weight(1.3f),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
                 onClick = openDatePicker,
             )
             InfoTile(
                 label = "Day",
-                value = s.recommendedDay,
+                value = s.recommendedDay.take(3),
                 editable = false,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(0.85f).fillMaxHeight(),
             )
             InfoTile(
                 label = "Time",
                 value = formatTime(s.recommendedTime),
                 editable = true,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1.1f).fillMaxHeight(),
                 onClick = openTimePicker,
             )
         }
@@ -851,16 +885,21 @@ private fun InfoTile(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
+    val scheduleWell = Color(0xFFE9F0EC)
+    val scheduleAccent = Color(0xFF3B6E57)
     val body: @Composable () -> Unit = {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MutedGray)
-                if (editable) PixelEditIcon(tint = MutedGray, size = 10.dp)
+                Text(label, style = MaterialTheme.typography.labelSmall, color = scheduleAccent)
+                if (editable) PixelEditIcon(tint = scheduleAccent, size = 10.dp)
             }
             Text(
                 value,
                 style = MaterialTheme.typography.titleSmall,
                 color = InkBlack,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
@@ -869,14 +908,14 @@ private fun InfoTile(
         Surface(
             onClick = onClick,
             shape = InnerTileShape,
-            color = SoftWell,
+            color = scheduleWell,
             border = null,
             modifier = modifier,
         ) { body() }
     } else {
         Surface(
             shape = InnerTileShape,
-            color = SoftWell,
+            color = scheduleWell,
             border = null,
             modifier = modifier,
         ) { body() }

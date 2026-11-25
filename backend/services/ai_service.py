@@ -27,9 +27,13 @@ Rules:
 - assets.hook_options: exactly 3 distinct hooks. primary_caption: ready-to-post caption or \
 short video script using line breaks. hashtags: 3-6, each starting with '#'.
 - creative_direction.shot_list: 3-6 shots with contiguous timestamps like '0-3s'.
-- schedule: recommended_date must be strictly AFTER the provided current date, \
-recommended_day must be the true weekday of that date, recommended_time is 24h HH:MM, \
-and peak_window_reason is one concise sentence.
+- schedule: pick a strategic recommended_date 1 to 10 days strictly AFTER the provided current date. \
+AVOID any dates listed under "Already scheduled dates" so the creator's calendar stays evenly spaced without double-booking. \
+Match the weekday and 24h HH:MM recommended_time to the specific topic, content_pillar, tone, and target_platforms \
+(e.g., educational/tech/career -> weekday morning 08:30 or lunch 12:15; gaming/comedy/entertainment -> Fri/Sat evening 20:30; \
+lifestyle/reflection/wellness -> Sunday morning 10:30 or weeknight wind-down 21:00). \
+recommended_day must be the true weekday of recommended_date, and peak_window_reason must be one specific, tailored sentence \
+referencing the topic/platform (never a generic boilerplate line).
 """
 
 
@@ -72,15 +76,24 @@ class AIService:
         return text
 
     async def parse(
-        self, transcript: str, client_time: datetime, brand_voice: str | None = None
+        self,
+        transcript: str,
+        client_time: datetime,
+        brand_voice: str | None = None,
+        booked_dates: list[str] | None = None,
     ) -> ParsedContent:
         today = client_time.strftime("%A, %Y-%m-%d")
         voice_line = f"\nCreator brand voice: {brand_voice.strip()}" if brand_voice and brand_voice.strip() else ""
-        user_prompt = f"Current date: {today}{voice_line}\n\nTranscript:\n{transcript}"
+        booked_line = (
+            f"\nAlready scheduled dates (pick a different open day): {', '.join(booked_dates)}"
+            if booked_dates
+            else ""
+        )
+        user_prompt = f"Current date: {today}{voice_line}{booked_line}\n\nTranscript:\n{transcript}"
         try:
             completion = await self._client.beta.chat.completions.parse(
                 model=PARSER_MODEL,
-                temperature=0.4,
+                temperature=0.55,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},

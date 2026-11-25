@@ -178,22 +178,27 @@ async def transcribe_and_parse(
     filename = f"memo.{ext}"
     ai: AIService = app.state.ai
 
-    # 1) Transcribe + upload raw audio to storage bucket + fetch brand voice concurrently
+    # 1) Transcribe + upload raw audio + fetch brand voice & existing scheduled dates concurrently
     storage_task = asyncio.create_task(
         db_service.upload_audio_to_storage(user_id, audio, ext, content_type, strict=False)
     )
     brand_voice_task = asyncio.create_task(db_service.get_brand_voice(user_id))
+    booked_dates_task = asyncio.create_task(db_service.get_recent_scheduled_dates(user_id))
     try:
         transcript = await ai.transcribe(audio, filename, content_type)
     except EmptyTranscriptError as exc:
         storage_task.cancel()
         brand_voice_task.cancel()
+        booked_dates_task.cancel()
         raise api_error(422, "NO_SPEECH", str(exc))
     except TranscriptionError:
         storage_task.cancel()
         brand_voice_task.cancel()
+        booked_dates_task.cancel()
         raise api_error(502, "ASR_FAILED", "Transcription service failed.")
-    storage_path, brand_voice = await asyncio.gather(storage_task, brand_voice_task)
+    storage_path, brand_voice, booked_dates = await asyncio.gather(
+        storage_task, brand_voice_task, booked_dates_task
+    )
 
     # 2) Persist the draft (pending) AND run GPT-4o mini structured parse concurrently
     draft_task = asyncio.create_task(
@@ -204,7 +209,9 @@ async def transcribe_and_parse(
             duration_seconds=valid_duration,
         )
     )
-    parse_task = asyncio.create_task(ai.parse(transcript, client_time, brand_voice=brand_voice))
+    parse_task = asyncio.create_task(
+        ai.parse(transcript, client_time, brand_voice=brand_voice, booked_dates=booked_dates)
+    )
 
     try:
         draft_id = await draft_task

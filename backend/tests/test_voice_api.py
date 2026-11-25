@@ -76,8 +76,15 @@ class StubAIService:
             raise EmptyTranscriptError("No intelligible speech detected in the recording.")
         return self.transcript
 
-    async def parse(self, transcript: str, client_time, brand_voice: str | None = None) -> ParsedContent:
+    async def parse(
+        self,
+        transcript: str,
+        client_time,
+        brand_voice: str | None = None,
+        booked_dates: list[str] | None = None,
+    ) -> ParsedContent:
         self.last_brand_voice = brand_voice
+        self.last_booked_dates = booked_dates
         return _sample_parsed()
 
 
@@ -349,7 +356,12 @@ class VoiceApiTestCase(unittest.TestCase):
             failed_drafts.append(draft_id)
             raise main.db_service.DatabaseError("secondary db error")
 
-        async def failing_parse(transcript: str, client_time, brand_voice: str | None = None):
+        async def failing_parse(
+            transcript: str,
+            client_time,
+            brand_voice: str | None = None,
+            booked_dates: list[str] | None = None,
+        ):
             raise ParsingError("LLM parse failed")
 
         with (
