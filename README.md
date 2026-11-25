@@ -8,14 +8,27 @@
 *Voice-driven AI content structuring assistant for short-form creators — blending Apple Liquid Glass with crisp 1-bit pixel craft.*
 
 <p>
+  <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v1.0.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v1.0-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
+  <a href="https://drafty-vh1d.onrender.com/health"><img src="https://img.shields.io/badge/API-Live_on_Render-059669?style=flat-square&logo=render&logoColor=white" alt="Live API" /></a>
   <img src="https://img.shields.io/badge/Android-Kotlin_&_Compose-111111?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Backend-FastAPI-111111?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/AI-Whisper_%2B_GPT--4o_mini-111111?style=flat-square&logo=openai&logoColor=white" alt="OpenAI" />
   <img src="https://img.shields.io/badge/Database-Supabase-111111?style=flat-square&logo=supabase&logoColor=white" alt="Supabase" />
-  <img src="https://img.shields.io/badge/Deploy-Render_%7C_Docker-111111?style=flat-square&logo=render&logoColor=white" alt="Render" />
 </p>
 
 </div>
+
+---
+
+## `[ 00 ]` Download & Live API
+
+- **Android App (APK):** [**Download `Drafty-v1.0.apk`**](https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v1.0.apk) *(or browse [All Releases](https://github.com/l4hgs/Drafty/releases/latest))*
+  1. Tap the download link on your Android phone (Android 7.0+ / API 24+).
+  2. Open `Drafty-v1.0.apk` and allow **Install unknown apps** for your browser if prompted.
+  3. Complete the 4-step onboarding, grant Microphone permission, and hold Drafty to start drafting!
+- **Live Cloud API:** `https://drafty-vh1d.onrender.com/`
+  - Health Check: [`GET /health`](https://drafty-vh1d.onrender.com/health)
+  - Interactive OpenAPI Docs: [`/docs`](https://drafty-vh1d.onrender.com/docs)
 
 ---
 
@@ -148,12 +161,13 @@ cd android
 
 ### 4. Deploy Publicly (Cloud Backend + Shareable APK)
 1. Push this repo to GitHub and deploy `render.yaml` on [Render](https://render.com) (set `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`).
+   - Current live instance: `https://drafty-vh1d.onrender.com/`
 2. Build a standalone APK pointed at your live HTTPS backend:
    ```powershell
    cd android
-   .\gradlew.bat :app:assembleDebug -PDRAFTY_API_URL=https://your-drafty-api.onrender.com/
+   .\gradlew.bat :app:assembleDebug -PDRAFTY_API_URL=https://drafty-vh1d.onrender.com/
    ```
-   Share `android/app/build/outputs/apk/debug/app-debug.apk` with anyone!
+3. Upload `android/app/build/outputs/apk/debug/Drafty-v1.0.apk` to a [GitHub Release](https://github.com/l4hgs/Drafty/releases/new) so Android users can download it directly!
 
 ---
 
