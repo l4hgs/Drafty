@@ -22,7 +22,7 @@ from models import (  # noqa: E402
     Schedule,
     Shot,
 )
-from services.ai_service import EmptyTranscriptError, ParsingError  # noqa: E402
+from services.ai_service import ContentSafetyError, EmptyTranscriptError, ParsingError  # noqa: E402
 
 SAMPLE_USER_ID = "11111111-2222-3333-4444-555555555555"
 SAMPLE_DRAFT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -375,6 +375,33 @@ class VoiceApiTestCase(unittest.TestCase):
             )
         self.assertEqual(res.status_code, 502)
         self.assertEqual(res.json()["code"], "PARSE_FAILED")
+        self.assertEqual(failed_drafts, [SAMPLE_DRAFT_ID])
+
+    def test_blocks_unsafe_content_with_422_content_blocked(self):
+        failed_drafts: list[str] = []
+
+        async def fake_mark_failed(draft_id: str) -> None:
+            failed_drafts.append(draft_id)
+
+        async def unsafe_parse(
+            transcript: str,
+            client_time,
+            brand_voice: str | None = None,
+            booked_dates: list[str] | None = None,
+        ):
+            raise ContentSafetyError("Drafty can't draft content that may be harmful, hateful, or unsafe.")
+
+        with (
+            patch.object(main.db_service, "mark_draft_failed", fake_mark_failed),
+            patch.object(main.app.state.ai, "parse", unsafe_parse),
+        ):
+            res = self.client.post(
+                "/api/v1/voice/transcribe-and-parse",
+                data={"user_id": SAMPLE_USER_ID, "client_timestamp": "2026-11-25T18:55:00Z"},
+                files={"file": ("memo.m4a", VALID_AUDIO_BYTES, "audio/m4a")},
+            )
+        self.assertEqual(res.status_code, 422)
+        self.assertEqual(res.json()["code"], "CONTENT_BLOCKED")
         self.assertEqual(failed_drafts, [SAMPLE_DRAFT_ID])
 
     def test_upsert_user_profile_success_validation_and_db_error(self):
