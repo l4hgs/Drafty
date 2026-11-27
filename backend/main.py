@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from auth import get_authenticated_user_id
@@ -101,6 +101,46 @@ async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespons
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/auth/verified", response_class=HTMLResponse)
+async def auth_verified_page() -> HTMLResponse:
+    """Clean HTTPS email-confirmation landing page that avoids invalid-scheme errors on desktop/Gmail webviews."""
+    html = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Email Verified · Drafty</title>
+  <style>
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; background:#FAFAFC; color:#0E0E10; display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; box-sizing:border-box; }
+    .card { background:#FFFFFF; border:1px solid #ECECF0; border-radius:24px; padding:36px 28px; max-width:400px; width:100%; text-align:center; box-shadow:0 8px 24px rgba(0,0,0,0.05); }
+    .badge { display:inline-block; background:#EAF7EE; color:#157A42; font-family:ui-monospace,monospace; font-size:11px; font-weight:600; padding:6px 12px; border-radius:999px; letter-spacing:0.6px; margin-bottom:16px; }
+    h1 { margin:0 0 10px; font-size:24px; letter-spacing:-0.4px; }
+    p { margin:0 0 24px; font-size:14.5px; line-height:1.5; color:#71717A; }
+    .btn { display:block; background:#0E0E10; color:#FFFFFF; text-decoration:none; font-weight:600; font-size:15px; padding:14px 20px; border-radius:999px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">VERIFIED · DRAFTY &amp; DRAFTED</div>
+    <h1>Email verified!</h1>
+    <p>Your account is confirmed and ready to sync between Drafty and Drafted. Return to the Drafty app and tap <strong>I've Verified &middot; Continue</strong>.</p>
+    <a id="openApp" class="btn" href="drafty://auth-callback">Open Drafty App</a>
+  </div>
+  <script>
+    (function() {
+      var suffix = (window.location.search || '') + (window.location.hash || '');
+      var deepLink = 'drafty://auth-callback' + suffix;
+      document.getElementById('openApp').setAttribute('href', deepLink);
+      if (/Android/i.test(navigator.userAgent)) {
+        window.location.href = deepLink;
+      }
+    })();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 @app.post(
@@ -214,16 +254,15 @@ async def transcribe_and_parse(
         brand_voice_task.cancel()
         booked_dates_task.cancel()
         raise api_error(502, "ASR_FAILED", "Transcription service failed.")
-    storage_path, brand_voice, booked_dates = await asyncio.gather(
-        storage_task, brand_voice_task, booked_dates_task
-    )
+    # Do not block GPT parsing on audio archival upload; storage_task finishes in background.
+    brand_voice, booked_dates = await asyncio.gather(brand_voice_task, booked_dates_task)
 
     # 2) Persist the draft (pending) AND run GPT-4o mini structured parse concurrently
     draft_task = asyncio.create_task(
         db_service.save_voice_draft(
             user_id,
             transcript,
-            audio_path=storage_path,
+            audio_path=None,
             duration_seconds=valid_duration,
         )
     )
@@ -235,6 +274,7 @@ async def transcribe_and_parse(
         draft_id = await draft_task
     except db_service.DatabaseError:
         parse_task.cancel()
+        storage_task.cancel()
         logger.exception("save_voice_draft failed")
         raise api_error(502, "DB_FAILED", "Could not save the draft.")
 
@@ -243,18 +283,21 @@ async def transcribe_and_parse(
         container = IdeaContainer(**parsed.model_dump(), draft_id=UUID(draft_id))
         await db_service.save_content_container(draft_id, user_id, container)
     except ContentSafetyError as exc:
+        storage_task.cancel()
         try:
             await db_service.mark_draft_failed(draft_id)
         except Exception:
             pass
         raise api_error(422, "CONTENT_BLOCKED", str(exc))
     except ParsingError:
+        storage_task.cancel()
         try:
             await db_service.mark_draft_failed(draft_id)
         except Exception:
             pass
         raise api_error(502, "PARSE_FAILED", "Content parsing failed.")
     except db_service.DatabaseError:
+        storage_task.cancel()
         logger.exception("save_content_container failed")
         try:
             await db_service.mark_draft_failed(draft_id)
@@ -262,11 +305,23 @@ async def transcribe_and_parse(
             pass
         raise api_error(502, "DB_FAILED", "Could not save the content container.")
     except Exception:
+        storage_task.cancel()
         try:
             await db_service.mark_draft_failed(draft_id)
         except Exception:
             pass
         raise
+
+    # Finalize voice_draft status & audio_storage_path in background without delaying response
+    async def _finalize_draft_bg() -> None:
+        audio_path: str | None = None
+        try:
+            audio_path = await storage_task
+        except Exception:
+            audio_path = None
+        await db_service.finalize_voice_draft(draft_id, audio_path)
+
+    asyncio.create_task(_finalize_draft_bg())
 
     elapsed = time.perf_counter() - started
     response.headers["X-Process-Time-Seconds"] = f"{elapsed:.3f}"
@@ -297,11 +352,12 @@ async def list_containers(
 @app.post(
     "/api/v1/containers/{container_id}/regenerate-hooks",
     response_model=RegenerateHooksResponse,
-    responses={code: {"model": ErrorResponse} for code in (422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 422, 502)},
 )
 async def regenerate_hooks(
     container_id: str,
     payload: RegenerateHooksRequest = Body(...),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
 ) -> RegenerateHooksResponse:
     try:
         UUID(container_id)
@@ -320,18 +376,19 @@ async def regenerate_hooks(
 @app.patch(
     "/api/v1/containers/{container_id}",
     response_model=IdeaContainer,
-    responses={code: {"model": ErrorResponse} for code in (404, 422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 404, 422, 502)},
 )
 async def update_container(
     container_id: str,
     payload: ContainerUpdateRequest = Body(...),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
 ) -> IdeaContainer:
     try:
         cid = str(UUID(container_id))
     except ValueError:
         raise api_error(422, "INVALID_CONTAINER_ID", "container_id must be a UUID.")
     try:
-        return await db_service.update_content_container(cid, payload)
+        return await db_service.update_content_container(cid, payload, owner_user_id=auth_user_id)
     except db_service.ContainerNotFoundError:
         raise api_error(404, "CONTAINER_NOT_FOUND", "Content container not found.")
     except db_service.DatabaseError:
@@ -342,15 +399,18 @@ async def update_container(
 @app.delete(
     "/api/v1/containers/{container_id}",
     response_model=ContainerDeleteResponse,
-    responses={code: {"model": ErrorResponse} for code in (404, 422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 404, 422, 502)},
 )
-async def delete_container(container_id: str) -> ContainerDeleteResponse:
+async def delete_container(
+    container_id: str,
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
+) -> ContainerDeleteResponse:
     try:
         cid = str(UUID(container_id))
     except ValueError:
         raise api_error(422, "INVALID_CONTAINER_ID", "container_id must be a UUID.")
     try:
-        result = await db_service.delete_content_container(cid)
+        result = await db_service.delete_content_container(cid, owner_user_id=auth_user_id)
     except db_service.ContainerNotFoundError:
         raise api_error(404, "CONTAINER_NOT_FOUND", "Content container not found.")
     except db_service.DatabaseError:

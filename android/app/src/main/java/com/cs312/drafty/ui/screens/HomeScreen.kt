@@ -86,6 +86,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,6 +94,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import com.cs312.drafty.core.auth.AuthSession
+import com.cs312.drafty.core.auth.EmailConfirmationRequiredException
 import com.cs312.drafty.data.local.PendingVoiceNoteEntity
 import com.cs312.drafty.ui.DraftyViewModel
 import com.cs312.drafty.ui.IdeaCard
@@ -108,6 +110,8 @@ import com.cs312.drafty.ui.components.LiquidGlassRecordingOverlay
 import com.cs312.drafty.ui.components.MascotState
 import com.cs312.drafty.ui.components.PixelCheckIcon
 import com.cs312.drafty.ui.components.PixelCloseIcon
+import com.cs312.drafty.ui.components.PixelEyeIcon
+import com.cs312.drafty.ui.components.PixelEyeOffIcon
 import com.cs312.drafty.ui.components.PixelIdeasIcon
 import com.cs312.drafty.ui.components.PixelQueueIcon
 import com.cs312.drafty.ui.components.PixelStopIcon
@@ -788,6 +792,19 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
     }
 
     val authSession by vm.authSession.collectAsState()
+    var pendingVerifyEmail by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingVerifyPassword by remember { mutableStateOf("") }
+    var checkingVerify by remember { mutableStateOf(false) }
+    var resendingEmail by remember { mutableStateOf(false) }
+
+    LaunchedEffect(authSession) {
+        if (authSession != null && pendingVerifyEmail != null) {
+            pendingVerifyEmail = null
+            pendingVerifyPassword = ""
+            showProfileSheet = false
+        }
+    }
+
     if (showProfileSheet) {
         CreatorProfileSheet(
             profile = profile,
@@ -814,7 +831,13 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                         toastState.show("Account created & synced with Drafted!")
                         showProfileSheet = false
                     }.onFailure { err ->
-                        toastState.show(err.message ?: "Couldn't create account.")
+                        if (err is EmailConfirmationRequiredException) {
+                            pendingVerifyEmail = err.email.ifBlank { email.trim() }
+                            pendingVerifyPassword = password
+                            showProfileSheet = false
+                        } else {
+                            toastState.show(err.message ?: "Couldn't create account.")
+                        }
                     }
                 }
             },
@@ -842,6 +865,43 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                         toastState.show(err.message ?: "Couldn't save your profile right now.")
                     }
                 }
+            },
+        )
+    }
+
+    pendingVerifyEmail?.let { targetEmail ->
+        EmailVerificationWaitingModal(
+            email = targetEmail,
+            checking = checkingVerify,
+            resending = resendingEmail,
+            onCheckVerified = {
+                checkingVerify = true
+                vm.signInWithEmail(targetEmail, pendingVerifyPassword) { res ->
+                    checkingVerify = false
+                    res.onSuccess {
+                        pendingVerifyEmail = null
+                        pendingVerifyPassword = ""
+                        haptics.onSuccess()
+                        toastState.show("Email verified & connected to Drafted!")
+                    }.onFailure {
+                        toastState.show("Not verified yet — tap the link in your inbox first.")
+                    }
+                }
+            },
+            onResend = {
+                resendingEmail = true
+                vm.resendSignupEmail(targetEmail) { res ->
+                    resendingEmail = false
+                    res.onSuccess {
+                        toastState.show("Verification email resent!")
+                    }.onFailure { err ->
+                        toastState.show(err.message ?: "Couldn't resend email right now.")
+                    }
+                }
+            },
+            onDismiss = {
+                pendingVerifyEmail = null
+                pendingVerifyPassword = ""
             },
         )
     }
@@ -1488,13 +1548,29 @@ private fun CreatorProfileSheet(
                     modifier = Modifier.fillMaxWidth(),
                     colors = softFieldColors(),
                 )
+                var passwordVisible by remember { mutableStateOf(false) }
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Password") },
                     placeholder = { Text("At least 6 characters") },
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        Surface(
+                            onClick = { passwordVisible = !passwordVisible },
+                            shape = CircleShape,
+                            color = Color.Transparent,
+                        ) {
+                            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                                if (passwordVisible) {
+                                    PixelEyeOffIcon(tint = InkBlack, size = 18.dp)
+                                } else {
+                                    PixelEyeIcon(tint = MutedGray, size = 18.dp)
+                                }
+                            }
+                        }
+                    },
                     shape = InnerTileShape,
                     modifier = Modifier.fillMaxWidth(),
                     colors = softFieldColors(),

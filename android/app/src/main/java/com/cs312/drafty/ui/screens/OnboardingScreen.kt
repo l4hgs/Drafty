@@ -1,6 +1,7 @@
 package com.cs312.drafty.ui.screens
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,11 +31,18 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,35 +57,45 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.cs312.drafty.core.auth.EmailConfirmationRequiredException
 import com.cs312.drafty.ui.DraftyViewModel
 import com.cs312.drafty.ui.components.DraftyMascot
 import com.cs312.drafty.ui.components.GlassButton
 import com.cs312.drafty.ui.components.GlassToastHost
 import com.cs312.drafty.ui.components.MascotState
 import com.cs312.drafty.ui.components.PixelCheckIcon
+import com.cs312.drafty.ui.components.PixelEyeIcon
+import com.cs312.drafty.ui.components.PixelEyeOffIcon
 import com.cs312.drafty.ui.components.SoftCard
 import com.cs312.drafty.ui.components.SoftChip
 import com.cs312.drafty.ui.components.rememberGlassToastState
 import com.cs312.drafty.ui.theme.AppBackground
+import com.cs312.drafty.ui.theme.CardShape
 import com.cs312.drafty.ui.theme.CardSurface
 import com.cs312.drafty.ui.theme.InkBlack
 import com.cs312.drafty.ui.theme.InnerTileShape
 import com.cs312.drafty.ui.theme.MutedGray
+import com.cs312.drafty.ui.theme.SoftWell
+import com.cs312.drafty.ui.theme.StatusGreen
 import com.cs312.drafty.ui.theme.SubtleDivider
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private const val PAGE_COUNT = 4
+private const val PAGE_COUNT = 5
 
 /**
- * Airy, minimal first-launch onboarding flow:
- * 1) { Drafty } hero welcome matching the Home screen
+ * Airy, minimal 5-step first-launch onboarding flow:
+ * 1) { Drafty } hero welcome with larger animated mascot
  * 2) LISTENING state — hold to talk, slide up to cancel
  * 3) THINKING state — structured Script, Creatives & Schedule
- * 4) Creator Profile setup (email, brand name, brand voice)
+ * 4) Unified Account (Sign In / Create Account + Continue with Google for Drafted sync)
+ * 5) Creator Voice setup (Brand Name + optional Brand Voice + Mic prompt)
  */
 @Composable
 fun OnboardingScreen(
@@ -88,11 +106,26 @@ fun OnboardingScreen(
     val scope = rememberCoroutineScope()
     val toastState = rememberGlassToastState()
     val pagerState = rememberPagerState(pageCount = { PAGE_COUNT })
+    val authSession by vm.authSession.collectAsState()
 
     var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var isSignUpMode by rememberSaveable { mutableStateOf(true) }
     var brandName by rememberSaveable { mutableStateOf("") }
     var brandVoice by rememberSaveable { mutableStateOf("") }
-    var saving by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var pendingVerifyEmail by rememberSaveable { mutableStateOf<String?>(null) }
+    var checkingVerify by remember { mutableStateOf(false) }
+    var resendingEmail by remember { mutableStateOf(false) }
+
+    // Auto-dismiss verification modal and advance if deep-link confirmation completes
+    LaunchedEffect(authSession) {
+        if (authSession != null && pendingVerifyEmail != null) {
+            pendingVerifyEmail = null
+            brandName = authSession?.displayName.orEmpty().ifBlank { brandName }
+            scope.launch { pagerState.animateScrollToPage(4) }
+        }
+    }
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -117,7 +150,8 @@ fun OnboardingScreen(
             0 -> Color(0xFFFF6BA9) // Pink — Welcome { Drafty }
             1 -> Color(0xFF38BDF8) // Blue — Hold & Listen
             2 -> Color(0xFF34D399) // Green — Structured Brief
-            else -> Color(0xFFFF9652) // Warm Orange — Profile Setup
+            3 -> Color(0xFF818CF8) // Soft Indigo — Unified Account
+            else -> Color(0xFFFF9652) // Warm Orange — Voice Setup
         },
         animationSpec = tween(420),
         label = "onboardingAura",
@@ -159,7 +193,7 @@ fun OnboardingScreen(
                 .navigationBarsPadding()
                 .imePadding(),
         ) {
-            // Top bar: minimal Skip shortcut
+            // Top bar: minimal Skip shortcut (jumps to Account step on intro pages)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -167,7 +201,7 @@ fun OnboardingScreen(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (pagerState.currentPage < PAGE_COUNT - 1) {
+                if (pagerState.currentPage < 3) {
                     Text(
                         text = "Skip",
                         style = MaterialTheme.typography.labelLarge,
@@ -175,7 +209,7 @@ fun OnboardingScreen(
                         modifier = Modifier
                             .clip(CircleShape)
                             .clickable {
-                                scope.launch { pagerState.animateScrollToPage(PAGE_COUNT - 1) }
+                                scope.launch { pagerState.animateScrollToPage(3) }
                             }
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                     )
@@ -209,9 +243,27 @@ fun OnboardingScreen(
                         chips = listOf("Script", "Creatives", "Schedule"),
                         isLandscape = isLandscape,
                     )
-                    else -> OnboardingProfilePage(
+                    3 -> OnboardingAccountPage(
                         email = email,
                         onEmail = { email = it },
+                        password = password,
+                        onPassword = { password = it },
+                        isSignUpMode = isSignUpMode,
+                        onToggleMode = { isSignUpMode = it },
+                        isSignedIn = authSession != null,
+                        signedInEmail = authSession?.email.orEmpty(),
+                        busy = busy,
+                        onContinueWithGoogle = {
+                            if (!vm.isSupabaseAuthConfigured) {
+                                toastState.show("Add Supabase keys to android/local.properties first.")
+                            } else {
+                                val uri = vm.authManager.buildGoogleOAuthUri()
+                                ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            }
+                        },
+                        isLandscape = isLandscape,
+                    )
+                    else -> OnboardingVoicePage(
                         brandName = brandName,
                         onBrandName = { brandName = it },
                         brandVoice = brandVoice,
@@ -225,9 +277,9 @@ fun OnboardingScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 28.dp, vertical = if (isLandscape) 12.dp else 24.dp),
+                    .padding(horizontal = 28.dp, vertical = if (isLandscape) 12.dp else 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(if (isLandscape) 12.dp else 20.dp),
+                verticalArrangement = Arrangement.spacedBy(if (isLandscape) 10.dp else 16.dp),
             ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -250,55 +302,164 @@ fun OnboardingScreen(
                 }
 
                 val ctaModifier = if (isLandscape) Modifier.widthIn(max = 420.dp).fillMaxWidth() else Modifier.fillMaxWidth()
-                if (pagerState.currentPage < PAGE_COUNT - 1) {
-                    GlassButton(
-                        text = if (pagerState.currentPage == PAGE_COUNT - 2) "Set Up Profile" else "Continue",
-                        dark = true,
-                        onClick = {
-                            scope.launch {
-                                pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                            }
-                        },
-                        modifier = ctaModifier,
-                    )
-                } else {
-                    val canSave = email.isNotBlank() && brandName.isNotBlank() && !saving
-                    GlassButton(
-                        text = if (saving) "Setting up…" else "Get Started",
-                        dark = true,
-                        enabled = canSave,
-                        leadingIcon = if (!saving) {
-                            { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
-                        } else null,
-                        onClick = {
-                            saving = true
-                            vm.saveUserProfile(email, brandName, brandVoice) { res ->
-                                saving = false
-                                res.onSuccess {
-                                    finishWithMicPrompt()
-                                }.onFailure {
-                                    vm.saveProfileLocally(email, brandName, brandVoice)
-                                    toastState.show("Profile saved on this device.")
+                when (pagerState.currentPage) {
+                    0, 1, 2 -> {
+                        GlassButton(
+                            text = if (pagerState.currentPage == 2) "Connect Account" else "Continue",
+                            dark = true,
+                            onClick = {
+                                scope.launch {
+                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                }
+                            },
+                            modifier = ctaModifier,
+                        )
+                    }
+                    3 -> {
+                        if (authSession != null) {
+                            GlassButton(
+                                text = "Next: Set Up Voice",
+                                dark = true,
+                                onClick = {
+                                    scope.launch { pagerState.animateScrollToPage(4) }
+                                },
+                                modifier = ctaModifier,
+                            )
+                        } else {
+                            val canAuth = !busy && email.isNotBlank() && password.length >= 6
+                            GlassButton(
+                                text = when {
+                                    busy -> "Please wait…"
+                                    isSignUpMode -> "Create Account & Continue"
+                                    else -> "Sign In"
+                                },
+                                dark = true,
+                                enabled = canAuth,
+                                onClick = {
+                                    busy = true
+                                    if (isSignUpMode) {
+                                        val fallbackName = email.substringBefore("@").ifBlank { "Creator" }
+                                        vm.signUpWithEmail(email, password, fallbackName, "") { res ->
+                                            busy = false
+                                            res.onSuccess {
+                                                brandName = it.displayName
+                                                toastState.show("Account created! Personalize your voice next.")
+                                                scope.launch { pagerState.animateScrollToPage(4) }
+                                            }.onFailure { err ->
+                                                if (err is EmailConfirmationRequiredException) {
+                                                    pendingVerifyEmail = err.email.ifBlank { email.trim() }
+                                                } else {
+                                                    toastState.show(err.message ?: "Couldn't create account.")
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        vm.signInWithEmail(email, password) { res ->
+                                            busy = false
+                                            res.onSuccess {
+                                                toastState.show("Welcome back!")
+                                                finishWithMicPrompt()
+                                            }.onFailure { err ->
+                                                toastState.show(err.message ?: "Couldn't sign in.")
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = ctaModifier,
+                            )
+                            Text(
+                                text = "Skip for now",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MutedGray,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable(enabled = !busy) {
+                                        scope.launch { pagerState.animateScrollToPage(4) }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                    else -> {
+                        val effectiveEmail = authSession?.email?.ifBlank { null } ?: email.trim()
+                        val canSave = !busy && brandName.isNotBlank()
+                        GlassButton(
+                            text = if (busy) "Setting up…" else "Get Started",
+                            dark = true,
+                            enabled = canSave,
+                            leadingIcon = if (!busy) {
+                                { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
+                            } else null,
+                            onClick = {
+                                busy = true
+                                if (effectiveEmail.isNotBlank()) {
+                                    vm.saveUserProfile(effectiveEmail, brandName, brandVoice) { res ->
+                                        busy = false
+                                        res.onSuccess {
+                                            finishWithMicPrompt()
+                                        }.onFailure {
+                                            vm.saveProfileLocally(effectiveEmail, brandName, brandVoice)
+                                            toastState.show("Profile saved on this device.")
+                                            finishWithMicPrompt()
+                                        }
+                                    }
+                                } else {
+                                    busy = false
+                                    vm.saveProfileLocally("", brandName, brandVoice)
                                     finishWithMicPrompt()
                                 }
-                            }
-                        },
-                        modifier = ctaModifier,
-                    )
-                    Text(
-                        text = "Skip for now",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MutedGray,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable(enabled = !saving) {
-                                vm.completeOnboarding()
-                                finishWithMicPrompt()
-                            }
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
+                            },
+                            modifier = ctaModifier,
+                        )
+                        Text(
+                            text = "Skip for now",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MutedGray,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable(enabled = !busy) {
+                                    vm.completeOnboarding()
+                                    finishWithMicPrompt()
+                                }
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             }
+        }
+
+        pendingVerifyEmail?.let { targetEmail ->
+            EmailVerificationWaitingModal(
+                email = targetEmail,
+                checking = checkingVerify,
+                resending = resendingEmail,
+                onCheckVerified = {
+                    checkingVerify = true
+                    vm.signInWithEmail(targetEmail, password) { res ->
+                        checkingVerify = false
+                        res.onSuccess { session ->
+                            pendingVerifyEmail = null
+                            brandName = session.displayName.ifBlank { brandName }
+                            toastState.show("Email verified! Personalize your voice next.")
+                            scope.launch { pagerState.animateScrollToPage(4) }
+                        }.onFailure {
+                            toastState.show("Not verified yet — tap the link in your inbox first.")
+                        }
+                    }
+                },
+                onResend = {
+                    resendingEmail = true
+                    vm.resendSignupEmail(targetEmail) { res ->
+                        resendingEmail = false
+                        res.onSuccess {
+                            toastState.show("Verification email resent!")
+                        }.onFailure { err ->
+                            toastState.show(err.message ?: "Couldn't resend email right now.")
+                        }
+                    }
+                },
+                onDismiss = { pendingVerifyEmail = null },
+            )
         }
 
         GlassToastHost(
@@ -309,9 +470,120 @@ fun OnboardingScreen(
     }
 }
 
+@Composable
+internal fun EmailVerificationWaitingModal(
+    email: String,
+    checking: Boolean,
+    resending: Boolean,
+    onCheckVerified: () -> Unit,
+    onResend: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var cooldownSeconds by remember(email) { mutableStateOf(60) }
+    LaunchedEffect(cooldownSeconds) {
+        if (cooldownSeconds > 0) {
+            delay(1000L)
+            cooldownSeconds -= 1
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = CardShape,
+        containerColor = CardSurface,
+        title = {
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                DraftyMascot(state = MascotState.THINKING, modifier = Modifier.size(84.dp))
+                Text(
+                    text = "Check your inbox",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = InkBlack,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        },
+        text = {
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "We sent a verification link to:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MutedGray,
+                    textAlign = TextAlign.Center,
+                )
+                SoftChip(text = email, fillColor = SoftWell, textColor = InkBlack)
+                Text(
+                    text = "Tap the link in your email to confirm your account — you'll return right back to Drafty. Already confirmed on another device? Tap below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedGray,
+                    textAlign = TextAlign.Center,
+                )
+                if (checking) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = InkBlack)
+                        Text("Checking verification…", style = MaterialTheme.typography.labelSmall, color = MutedGray)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GlassButton(
+                    text = if (checking) "Checking…" else "I've Verified · Continue",
+                    onClick = onCheckVerified,
+                    dark = true,
+                    enabled = !checking,
+                    minHeight = 44.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GlassButton(
+                        text = when {
+                            resending -> "Resending…"
+                            cooldownSeconds > 0 -> "Resend (${cooldownSeconds}s)"
+                            else -> "Resend Email"
+                        },
+                        onClick = {
+                            cooldownSeconds = 60
+                            onResend()
+                        },
+                        dark = false,
+                        enabled = !resending && !checking && cooldownSeconds == 0,
+                        minHeight = 42.dp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    GlassButton(
+                        text = "Close",
+                        onClick = onDismiss,
+                        dark = false,
+                        minHeight = 42.dp,
+                        modifier = Modifier.weight(0.75f),
+                    )
+                }
+            }
+        },
+    )
+}
+
 /**
- * Page 1: Ultra-minimal { Drafty } hero matching the Home screen aesthetic
- * with generous open whitespace.
+ * Page 1: Ultra-minimal { Drafty } hero with a larger animated Drafty mascot.
  */
 @Composable
 private fun OnboardingWelcomePage(isLandscape: Boolean) {
@@ -373,7 +645,7 @@ private fun OnboardingWelcomePage(isLandscape: Boolean) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
         ) {
-            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(84.dp))
+            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(116.dp))
             Column(horizontalAlignment = Alignment.Start) { content() }
         }
     } else {
@@ -384,8 +656,8 @@ private fun OnboardingWelcomePage(isLandscape: Boolean) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(78.dp))
-            Spacer(Modifier.height(32.dp))
+            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(124.dp))
+            Spacer(Modifier.height(28.dp))
             content()
         }
     }
@@ -451,7 +723,7 @@ private fun OnboardingStatePage(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
         ) {
-            DraftyMascot(state = mascotState, modifier = Modifier.size(96.dp))
+            DraftyMascot(state = mascotState, modifier = Modifier.size(116.dp))
             Box(Modifier.widthIn(max = 420.dp)) {
                 textBlock(Alignment.Start, TextAlign.Start)
             }
@@ -464,17 +736,182 @@ private fun OnboardingStatePage(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            DraftyMascot(state = mascotState, modifier = Modifier.size(104.dp))
-            Spacer(Modifier.height(38.dp))
+            DraftyMascot(state = mascotState, modifier = Modifier.size(128.dp))
+            Spacer(Modifier.height(32.dp))
             textBlock(Alignment.CenterHorizontally, TextAlign.Center)
         }
     }
 }
 
+/**
+ * Page 4: Low-friction Unified Account step (Sign In / Create Account + Google OAuth)
+ * so the user's account is ready to sync directly to Drafted.
+ */
 @Composable
-private fun OnboardingProfilePage(
+private fun OnboardingAccountPage(
     email: String,
     onEmail: (String) -> Unit,
+    password: String,
+    onPassword: (String) -> Unit,
+    isSignUpMode: Boolean,
+    onToggleMode: (Boolean) -> Unit,
+    isSignedIn: Boolean,
+    signedInEmail: String,
+    busy: Boolean,
+    onContinueWithGoogle: () -> Unit,
+    isLandscape: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (!isLandscape) {
+            DraftyMascot(
+                state = MascotState.IDLE,
+                modifier = Modifier.size(88.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+        Text(
+            text = if (isSignUpMode) "Create your account" else "Sign in to Drafty",
+            style = MaterialTheme.typography.headlineMedium.copy(
+                fontSize = if (isLandscape) 22.sp else 26.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.5).sp,
+            ),
+            color = InkBlack,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "One account syncs your scheduled ideas straight into Drafted.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedGray,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(if (isLandscape) 12.dp else 22.dp))
+
+        SoftCard(
+            modifier = if (isLandscape) Modifier.widthIn(max = 520.dp).fillMaxWidth() else Modifier.fillMaxWidth(),
+            color = CardSurface,
+        ) {
+            if (isSignedIn) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    SoftChip(
+                        text = "Connected to Drafted",
+                        fillColor = Color(0xFFEAF7EE),
+                        textColor = Color(0xFF157A42),
+                        dotColor = StatusGreen,
+                    )
+                    Text(
+                        text = signedInEmail,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = InkBlack,
+                    )
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Segmented Create Account / Sign In toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(50))
+                            .background(SoftWell)
+                            .padding(4.dp),
+                    ) {
+                        listOf(true to "Create Account", false to "Sign In").forEach { (signUp, label) ->
+                            val active = isSignUpMode == signUp
+                            Surface(
+                                onClick = { onToggleMode(signUp) },
+                                shape = RoundedCornerShape(50),
+                                color = if (active) InkBlack else Color.Transparent,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = if (active) CardSurface else MutedGray,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    GlassButton(
+                        text = "Continue with Google",
+                        dark = false,
+                        enabled = !busy,
+                        onClick = onContinueWithGoogle,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        HorizontalDivider(Modifier.weight(1f), color = SubtleDivider)
+                        Text("OR EMAIL", style = MaterialTheme.typography.labelSmall, color = MutedGray)
+                        HorizontalDivider(Modifier.weight(1f), color = SubtleDivider)
+                    }
+
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = onEmail,
+                        label = { Text("Email address") },
+                        placeholder = { Text("creator@drafty.app") },
+                        singleLine = true,
+                        shape = InnerTileShape,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = softFieldColors(),
+                    )
+                    var passwordVisible by remember { mutableStateOf(false) }
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = onPassword,
+                        label = { Text("Password") },
+                        placeholder = { Text("At least 6 characters") },
+                        singleLine = true,
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Surface(
+                                onClick = { passwordVisible = !passwordVisible },
+                                shape = CircleShape,
+                                color = Color.Transparent,
+                            ) {
+                                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                                    if (passwordVisible) {
+                                        PixelEyeOffIcon(tint = InkBlack, size = 18.dp)
+                                    } else {
+                                        PixelEyeIcon(tint = MutedGray, size = 18.dp)
+                                    }
+                                }
+                            }
+                        },
+                        shape = InnerTileShape,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = softFieldColors(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Page 5: Focused Brand Name & Voice personalization step (only 2 fields).
+ */
+@Composable
+private fun OnboardingVoicePage(
     brandName: String,
     onBrandName: (String) -> Unit,
     brandVoice: String,
@@ -492,9 +929,9 @@ private fun OnboardingProfilePage(
         if (!isLandscape) {
             DraftyMascot(
                 state = MascotState.CELEBRATING,
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(92.dp),
             )
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
         }
         Text(
             text = "Set up your voice",
@@ -513,23 +950,13 @@ private fun OnboardingProfilePage(
             color = MutedGray,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(if (isLandscape) 14.dp else 28.dp))
+        Spacer(Modifier.height(if (isLandscape) 14.dp else 24.dp))
 
         SoftCard(
             modifier = if (isLandscape) Modifier.widthIn(max = 520.dp).fillMaxWidth() else Modifier.fillMaxWidth(),
             color = CardSurface,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = onEmail,
-                    label = { Text("Email address") },
-                    placeholder = { Text("creator@drafty.app") },
-                    singleLine = true,
-                    shape = InnerTileShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = softFieldColors(),
-                )
                 OutlinedTextField(
                     value = brandName,
                     onValueChange = onBrandName,
