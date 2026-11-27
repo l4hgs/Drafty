@@ -53,6 +53,10 @@ class Settings:
     def LOG_LEVEL(self) -> str:
         return os.getenv("LOG_LEVEL", "INFO")
 
+    @property
+    def REQUIRE_AUTH(self) -> bool:
+        return os.getenv("REQUIRE_AUTH", "false").strip().lower() in ("1", "true", "yes")
+
 
 settings = Settings()
 

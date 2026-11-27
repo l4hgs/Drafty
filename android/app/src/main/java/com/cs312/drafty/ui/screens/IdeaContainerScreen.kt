@@ -6,12 +6,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
-import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -21,6 +24,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -29,9 +33,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,11 +79,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cs312.drafty.data.remote.IdeaContainer
+import com.cs312.drafty.data.remote.ShotItem
 import com.cs312.drafty.ui.DraftyViewModel
 import com.cs312.drafty.ui.SyncState
 import com.cs312.drafty.ui.components.DraftyMascot
 import com.cs312.drafty.ui.components.GlassButton
 import com.cs312.drafty.ui.components.GlassIconButton
+import com.cs312.drafty.ui.components.GlassToastHost
+import com.cs312.drafty.ui.components.GlassToastState
+import com.cs312.drafty.ui.components.HapticChoreographer
 import com.cs312.drafty.ui.components.MascotState
 import com.cs312.drafty.ui.components.PixelBackIcon
 import com.cs312.drafty.ui.components.PixelCheckIcon
@@ -87,6 +101,9 @@ import com.cs312.drafty.ui.components.PlatformLogoBadge
 import com.cs312.drafty.ui.components.SoftCard
 import com.cs312.drafty.ui.components.SoftChip
 import com.cs312.drafty.ui.components.canonicalPlatform
+import com.cs312.drafty.ui.components.rememberGlassToastState
+import com.cs312.drafty.ui.components.rememberHapticChoreographer
+import com.cs312.drafty.ui.components.springPressScale
 import com.cs312.drafty.ui.theme.AppBackground
 import com.cs312.drafty.ui.theme.CardShape
 import com.cs312.drafty.ui.theme.CardSurface
@@ -98,8 +115,8 @@ import com.cs312.drafty.ui.theme.ShadowAmbient
 import com.cs312.drafty.ui.theme.ShadowSpot
 import com.cs312.drafty.ui.theme.SoftWell
 import com.cs312.drafty.ui.theme.StatusGreen
-import com.cs312.drafty.ui.theme.StatusRed
 import com.cs312.drafty.ui.theme.SubtleDivider
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -126,12 +143,20 @@ private fun copyToClipboard(ctx: Context, label: String, text: String) {
     cm.setPrimaryClip(ClipData.newPlainText(label, text))
 }
 
-private fun formatScriptForCopy(idea: IdeaContainer): String = buildString {
+private fun formatScriptForCopy(idea: IdeaContainer, selectedHookIndex: Int = 0): String = buildString {
     appendLine(idea.title)
     appendLine()
-    if (idea.assets.hookOptions.isNotEmpty()) {
-        appendLine("Hooks:")
-        idea.assets.hookOptions.forEachIndexed { idx, h -> appendLine("${idx + 1}. $h") }
+    val hooks = idea.assets.hookOptions
+    if (hooks.isNotEmpty()) {
+        val primaryIdx = selectedHookIndex.coerceIn(0, hooks.lastIndex)
+        appendLine("Primary Hook:")
+        appendLine(hooks[primaryIdx])
+        val others = hooks.filterIndexed { idx, _ -> idx != primaryIdx }
+        if (others.isNotEmpty()) {
+            appendLine()
+            appendLine("Alternate Hooks:")
+            others.forEachIndexed { idx, h -> appendLine("${idx + 1}. $h") }
+        }
         appendLine()
     }
     appendLine(idea.assets.primaryCaption)
@@ -158,12 +183,56 @@ private fun formatShotListForCopy(idea: IdeaContainer): String = buildString {
     }
 }.trim()
 
-private fun shareIdeaBrief(ctx: Context, idea: IdeaContainer) {
+private fun formatScheduleSummary(idea: IdeaContainer, scheduledForOverride: String? = null): String {
+    if (!scheduledForOverride.isNullOrBlank()) {
+        val date = formatDate(scheduledForOverride.substringBefore('T'), "EEE, MMM d")
+        val time = scheduledForOverride.substringAfter('T', "").takeIf { it.isNotBlank() }?.let(::formatTime)
+        val slot = listOfNotNull(date, time).joinToString(" · ")
+        if (slot.isNotBlank()) return "Scheduled for $slot"
+    }
+    val dateWithDay = formatDate(idea.schedule.recommendedDate, "EEE, MMM d")
+    val timePart = formatTime(idea.schedule.recommendedTime)
+    return "Scheduled for $dateWithDay · $timePart"
+}
+
+private fun openOrCopyForDrafted(
+    ctx: Context,
+    idea: IdeaContainer,
+    selectedHookIndex: Int,
+    haptics: HapticChoreographer,
+    toastState: GlassToastState,
+    scheduledForOverride: String? = null,
+) {
+    val pm = ctx.packageManager
+    val candidatePackages = listOf("com.example.drafted", "com.cs312.drafted", "com.drafted.app", "app.drafted")
+    val launchIntent = candidatePackages.firstNotNullOfOrNull { pkg ->
+        pm.getLaunchIntentForPackage(pkg)
+    } ?: Intent(Intent.ACTION_VIEW, Uri.parse("drafted://calendar")).takeIf { intent ->
+        intent.resolveActivity(pm) != null
+    }
+
+    if (launchIntent != null) {
+        haptics.onSuccess()
+        ctx.startActivity(launchIntent)
+        return
+    }
+
+    val summaryText = buildString {
+        appendLine(formatScheduleSummary(idea, scheduledForOverride) + " in Drafted")
+        appendLine()
+        append(formatScriptForCopy(idea, selectedHookIndex))
+    }.trim()
+    copyToClipboard(ctx, "Drafted Schedule Summary", summaryText)
+    haptics.onSuccess()
+    toastState.show("Copied schedule summary for Drafted!")
+}
+
+private fun shareIdeaBrief(ctx: Context, idea: IdeaContainer, selectedHookIndex: Int = 0) {
     val body = buildString {
         appendLine(idea.title)
         appendLine(idea.summary)
         appendLine()
-        appendLine(formatScriptForCopy(idea))
+        appendLine(formatScriptForCopy(idea, selectedHookIndex))
         appendLine()
         appendLine(formatShotListForCopy(idea))
         appendLine()
@@ -181,28 +250,38 @@ private fun shareIdeaBrief(ctx: Context, idea: IdeaContainer) {
 @Composable
 fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val toastState = rememberGlassToastState()
+    val haptics = rememberHapticChoreographer()
     val card by remember(id) { vm.observeIdea(id) }.collectAsState(initial = null)
     val sync by vm.syncState.collectAsState()
 
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { TabTitles.size })
+    var selectedHookIndex by rememberSaveable(id) { mutableIntStateOf(0) }
     var editing by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var regeneratingHooks by remember { mutableStateOf(false) }
     var draftTitle by remember { mutableStateOf("") }
     var draftCaption by remember { mutableStateOf("") }
     var draftCta by remember { mutableStateOf("") }
+    var draftShots by remember { mutableStateOf<List<ShotItem>>(emptyList()) }
 
     LaunchedEffect(sync) {
-        (sync as? SyncState.Error)?.let {
-            Toast.makeText(ctx, it.message, Toast.LENGTH_LONG).show()
-            vm.resetSync()
+        when (val s = sync) {
+            is SyncState.Error -> {
+                toastState.show(s.message)
+                vm.resetSync()
+            }
+            is SyncState.Synced -> haptics.onSuccess()
+            else -> Unit
         }
     }
     DisposableEffect(Unit) { onDispose { vm.resetSync() } }
 
     val current = card
+    val activeTab = pagerState.currentPage
     val patchPrimary by animateColorAsState(
-        targetValue = when (tab) {
+        targetValue = when (activeTab) {
             0 -> Color(0xFF38BDF8) // Script — Blue
             1 -> Color(0xFFF43F5E) // Creatives — Red
             else -> Color(0xFF34D399) // Schedule — Green
@@ -211,7 +290,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
         label = "tabPatchPrimary",
     )
     val patchSecondary by animateColorAsState(
-        targetValue = when (tab) {
+        targetValue = when (activeTab) {
             0 -> Color(0xFF60A5FA) // Script — Soft Sky Blue
             1 -> Color(0xFFFB7185) // Creatives — Soft Rose Red
             else -> Color(0xFF4ADE80) // Schedule — Soft Mint Green
@@ -221,7 +300,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
     )
 
     val tabAccent by animateColorAsState(
-        targetValue = when (tab) {
+        targetValue = when (activeTab) {
             0 -> Color(0xFF3B6790) // Script — Muted Steel Blue
             1 -> Color(0xFF9B4A55) // Creatives — Muted Dusty Rose
             else -> Color(0xFF3B6E57) // Schedule — Muted Forest Sage
@@ -230,7 +309,9 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
         label = "tabAccent",
     )
 
-    Box(Modifier.fillMaxSize().background(AppBackground)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(AppBackground)) {
+        val isLandscape = maxWidth > maxHeight && maxWidth >= 560.dp
+
         // Richer soft ambient color patches behind the container cards (Blue / Red / Green per tab)
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
@@ -285,66 +366,159 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = InkBlack)
         } else {
             val idea = current.idea
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = 20.dp, end = 20.dp, top = 80.dp, bottom = 116.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                TitleCard(idea, editing, draftTitle) { draftTitle = it }
-                TabRow(tab, activeColor = tabAccent) { tab = it }
+            val synced = current.isPushed || sync is SyncState.Synced
+            val safeHookIndex = selectedHookIndex.coerceIn(0, (idea.assets.hookOptions.size - 1).coerceAtLeast(0))
 
-                when (tab) {
-                    0 -> ScriptTab(
-                        idea = idea,
-                        editing = editing,
-                        caption = draftCaption,
-                        onCaption = { draftCaption = it },
-                        cta = draftCta,
-                        onCta = { draftCta = it },
-                        regeneratingHooks = regeneratingHooks,
-                        onRegenerateHooks = {
-                            if (!regeneratingHooks) {
-                                regeneratingHooks = true
-                                vm.regenerateHooks(idea) { res ->
-                                    regeneratingHooks = false
-                                    res.onSuccess {
-                                        Toast.makeText(ctx, "3 fresh hooks generated!", Toast.LENGTH_SHORT).show()
-                                    }.onFailure { err ->
-                                        Toast.makeText(ctx, err.message ?: "Failed to regenerate hooks", Toast.LENGTH_LONG).show()
+            val pagerContent: @Composable () -> Unit = {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    pageSpacing = 14.dp,
+                ) { page ->
+                    when (page) {
+                        0 -> ScriptTab(
+                            idea = idea,
+                            editing = editing,
+                            selectedHookIndex = safeHookIndex,
+                            onSelectHook = { idx ->
+                                selectedHookIndex = idx
+                                haptics.onThresholdCross()
+                            },
+                            caption = draftCaption,
+                            onCaption = { draftCaption = it },
+                            cta = draftCta,
+                            onCta = { draftCta = it },
+                            regeneratingHooks = regeneratingHooks,
+                            onRegenerateHooks = {
+                                if (!regeneratingHooks) {
+                                    regeneratingHooks = true
+                                    vm.regenerateHooks(idea) { res ->
+                                        regeneratingHooks = false
+                                        res.onSuccess {
+                                            selectedHookIndex = 0
+                                            haptics.onSuccess()
+                                            toastState.show("3 fresh hooks generated!")
+                                        }.onFailure { err ->
+                                            toastState.show(err.message ?: "Couldn't generate new hooks right now.")
+                                        }
                                     }
                                 }
-                            }
-                        },
-                        onCopyScript = {
-                            copyToClipboard(ctx, "Drafty Script", formatScriptForCopy(idea))
-                            Toast.makeText(ctx, "Script & hashtags copied!", Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                    1 -> CreativesTab(
-                        idea = idea,
-                        onCopyShotList = {
-                            copyToClipboard(ctx, "Drafty Shot List", formatShotListForCopy(idea))
-                            Toast.makeText(ctx, "Shot list copied!", Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                    else -> ScheduleTab(
-                        idea = idea,
-                        onUpdateSchedule = { newDate, newDay, newTime ->
-                            vm.updateContainer(
-                                idea.copy(
-                                    schedule = idea.schedule.copy(
-                                        recommendedDate = newDate,
-                                        recommendedDay = newDay,
-                                        recommendedTime = newTime,
+                            },
+                            onCopyScript = {
+                                copyToClipboard(ctx, "Drafty Script", formatScriptForCopy(idea, safeHookIndex))
+                                haptics.onPressDown()
+                                toastState.show(
+                                    if (idea.assets.hookOptions.isNotEmpty()) {
+                                        "Copied with primary hook!"
+                                    } else {
+                                        "Script & hashtags copied!"
+                                    },
+                                )
+                            },
+                        )
+                        1 -> CreativesTab(
+                            idea = idea,
+                            editing = editing,
+                            draftShots = draftShots,
+                            onShotDescriptionChange = { index, newDesc ->
+                                draftShots = draftShots.mapIndexed { idx, item ->
+                                    if (idx == index) item.copy(description = newDesc) else item
+                                }
+                            },
+                            onCopyShotList = {
+                                copyToClipboard(ctx, "Drafty Shot List", formatShotListForCopy(idea))
+                                haptics.onPressDown()
+                                toastState.show("Shot list copied!")
+                            },
+                        )
+                        else -> ScheduleTab(
+                            idea = idea,
+                            isSynced = synced,
+                            scheduledForOverride = (sync as? SyncState.Synced)?.scheduledFor,
+                            onUpdateSchedule = { newDate, newDay, newTime ->
+                                vm.updateContainer(
+                                    idea.copy(
+                                        schedule = idea.schedule.copy(
+                                            recommendedDate = newDate,
+                                            recommendedDay = newDay,
+                                            recommendedTime = newTime,
+                                        ),
                                     ),
-                                ),
-                            )
+                                )
+                            },
+                            onViewInDrafted = {
+                                openOrCopyForDrafted(
+                                    ctx = ctx,
+                                    idea = idea,
+                                    selectedHookIndex = safeHookIndex,
+                                    haptics = haptics,
+                                    toastState = toastState,
+                                    scheduledForOverride = (sync as? SyncState.Synced)?.scheduledFor,
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+
+            if (isLandscape) {
+                Row(
+                    Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(start = 24.dp, end = 24.dp, top = 68.dp, bottom = 88.dp),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Column(
+                        Modifier
+                            .weight(0.42f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        TitleCard(idea, editing, draftTitle) { draftTitle = it }
+                        TabRow(
+                            selected = pagerState.currentPage,
+                            pageOffsetFraction = pagerState.currentPageOffsetFraction,
+                            activeColor = tabAccent,
+                            onSelect = { target ->
+                                haptics.onThresholdCross()
+                                scope.launch { pagerState.animateScrollToPage(target) }
+                            },
+                        )
+                    }
+                    Column(
+                        Modifier
+                            .weight(0.58f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        pagerContent()
+                    }
+                }
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, top = 80.dp, bottom = 116.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    TitleCard(idea, editing, draftTitle) { draftTitle = it }
+                    TabRow(
+                        selected = pagerState.currentPage,
+                        pageOffsetFraction = pagerState.currentPageOffsetFraction,
+                        activeColor = tabAccent,
+                        onSelect = { target ->
+                            haptics.onThresholdCross()
+                            scope.launch { pagerState.animateScrollToPage(target) }
                         },
                     )
+                    pagerContent()
                 }
             }
 
@@ -353,7 +527,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .height(112.dp)
+                    .height(if (isLandscape) 80.dp else 112.dp)
                     .then(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(14.dp) else Modifier)
                     .background(
                         Brush.verticalGradient(
@@ -364,22 +538,56 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                     ),
             )
 
-            // Pinned floating glassmorphic top bar (Back, Share & Delete)
-            Row(
+            // Pinned floating glassmorphic top bar (Back, Editing pill, Share & Delete)
+            Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .padding(horizontal = 20.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
             ) {
-                GlassIconButton(onClick = onBack) {
+                GlassIconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                ) {
                     PixelBackIcon(tint = InkBlack, size = 16.dp)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+
+                AnimatedVisibility(
+                    visible = editing,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.Center),
+                ) {
+                    Surface(
+                        shape = PillShape,
+                        color = Color(0xEBFFFFFF),
+                        border = BorderStroke(1.dp, Color.White),
+                        shadowElevation = 0.dp,
+                        modifier = Modifier.shadow(6.dp, PillShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            PixelEditIcon(tint = InkBlack, size = 11.dp)
+                            Text(
+                                text = "Editing",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = InkBlack,
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     GlassIconButton(
-                        onClick = { shareIdeaBrief(ctx, idea) },
+                        onClick = { shareIdeaBrief(ctx, idea, safeHookIndex) },
                     ) {
                         PixelShareIcon(tint = InkBlack, size = 17.dp)
                     }
@@ -433,7 +641,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .height(136.dp)
+                    .height(if (isLandscape) 96.dp else 136.dp)
                     .then(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(16.dp) else Modifier)
                     .background(
                         Brush.verticalGradient(
@@ -445,7 +653,6 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                     ),
             )
 
-            val synced = current.isPushed || sync is SyncState.Synced
             Dock(
                 editing = editing,
                 synced = synced,
@@ -456,28 +663,101 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
                             idea.copy(
                                 title = draftTitle.ifBlank { idea.title },
                                 assets = idea.assets.copy(primaryCaption = draftCaption, cta = draftCta),
+                                creativeDirection = idea.creativeDirection.copy(
+                                    shotList = draftShots.ifEmpty { idea.creativeDirection.shotList },
+                                ),
                             ),
                         )
                         editing = false
+                        haptics.onSuccess()
+                        toastState.show("Changes saved!")
                     } else {
                         draftTitle = idea.title
                         draftCaption = idea.assets.primaryCaption
                         draftCta = idea.assets.cta
+                        draftShots = idea.creativeDirection.shotList
                         editing = true
+                        haptics.onPressDown()
                     }
                 },
-                onSchedule = { vm.scheduleToDrafted(idea.id) },
-                modifier = Modifier.align(Alignment.BottomCenter),
+                onCancelEdit = {
+                    draftTitle = idea.title
+                    draftCaption = idea.assets.primaryCaption
+                    draftCta = idea.assets.cta
+                    draftShots = idea.creativeDirection.shotList
+                    editing = false
+                    haptics.onPressDown()
+                },
+                onSchedule = { vm.scheduleToDrafted(idea.id, safeHookIndex) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .then(if (isLandscape) Modifier.widthIn(max = 520.dp) else Modifier),
             )
+
+            (sync as? SyncState.Synced)?.let { syncedState ->
+                CelebrationOverlay(
+                    idea = idea,
+                    scheduledFor = syncedState.scheduledFor,
+                    onViewInDrafted = {
+                        openOrCopyForDrafted(
+                            ctx = ctx,
+                            idea = idea,
+                            selectedHookIndex = safeHookIndex,
+                            haptics = haptics,
+                            toastState = toastState,
+                            scheduledForOverride = syncedState.scheduledFor,
+                        )
+                    },
+                    onDone = vm::resetSync,
+                )
+            }
         }
 
-        (sync as? SyncState.Synced)?.let { CelebrationOverlay(it.scheduledFor, onDone = vm::resetSync) }
+        GlassToastHost(
+            state = toastState,
+            bottomPadding = 104.dp,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
 @Composable
 private fun TitleCard(idea: IdeaContainer, editing: Boolean, draftTitle: String, onTitle: (String) -> Unit) {
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
+        // Drafted-style metadata top row: platform badges + pillar on left, monospace slot on right
+        val platforms = remember(idea.metadata.targetPlatforms) {
+            idea.metadata.targetPlatforms.map(::canonicalPlatform).distinct()
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                platforms.forEach { PlatformLogoBadge(platform = it, size = 22.dp) }
+                SoftChip(
+                    text = idea.metadata.contentPillar,
+                    fillColor = SoftWell,
+                    dotColor = InkBlack,
+                    textColor = InkBlack,
+                )
+            }
+            Text(
+                text = formatTime(idea.schedule.recommendedTime),
+                style = MaterialTheme.typography.labelMedium,
+                color = MutedGray,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+
         if (editing) {
             OutlinedTextField(
                 value = draftTitle,
@@ -496,65 +776,57 @@ private fun TitleCard(idea: IdeaContainer, editing: Boolean, draftTitle: String,
             color = MutedGray,
             modifier = Modifier.padding(top = 8.dp),
         )
-        val platforms = remember(idea.metadata.targetPlatforms) {
-            idea.metadata.targetPlatforms.map(::canonicalPlatform).distinct()
-        }
-        Row(
-            Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            platforms.forEach { PlatformLogoBadge(platform = it, size = 26.dp) }
-            SoftChip(
-                text = idea.metadata.contentPillar,
-                fillColor = Color(0xFFEAE8F2),
-                textColor = Color(0xFF4E4668),
-            )
-        }
     }
 }
 
 @Composable
-private fun TabRow(selected: Int, activeColor: Color, onSelect: (Int) -> Unit) {
-    val trackShape = RoundedCornerShape(20.dp)
-    val selectedTabBrush = Brush.linearGradient(
-        listOf(Color(0xEBFFFFFF), Color(0xCCFFFFFF), Color(0xE0FFFFFF)),
-    )
-    Row(
+private fun TabRow(
+    selected: Int,
+    pageOffsetFraction: Float,
+    activeColor: Color,
+    onSelect: (Int) -> Unit,
+) {
+    // Drafted-style segmented pill control: SoftWell capsule track with solid jet-black active pill
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .shadow(4.dp, trackShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot)
-            .clip(trackShape)
-            .background(Color(0x70FFFFFF))
-            .border(1.dp, Color(0xD9FFFFFF), trackShape)
+            .shadow(3.dp, PillShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot)
+            .clip(PillShape)
+            .background(Color(0xF0FFFFFF))
+            .border(1.dp, SubtleDivider, PillShape)
             .padding(4.dp),
     ) {
-        TabTitles.forEachIndexed { i, title ->
-            val isSel = i == selected
-            Box(
-                Modifier
-                    .weight(1f)
-                    .then(
-                        if (isSel) {
-                            Modifier
-                                .shadow(6.dp, PillShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot)
-                                .clip(PillShape)
-                                .background(selectedTabBrush)
-                                .border(1.dp, Color.White, PillShape)
-                        } else {
-                            Modifier.clip(PillShape)
-                        },
+        val tabWidth = maxWidth / TabTitles.size
+        val indicatorPosition = (selected + pageOffsetFraction).coerceIn(0f, (TabTitles.size - 1).toFloat())
+
+        // Sliding solid jet-black indicator pill synchronized with HorizontalPager
+        Box(
+            Modifier
+                .offset(x = tabWidth * indicatorPosition)
+                .width(tabWidth)
+                .height(38.dp)
+                .clip(PillShape)
+                .background(InkBlack),
+        )
+
+        Row(Modifier.fillMaxWidth()) {
+            TabTitles.forEachIndexed { i, title ->
+                val isSel = i == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(38.dp)
+                        .clip(PillShape)
+                        .clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (isSel) CardSurface else MutedGray,
                     )
-                    .clickable { onSelect(i) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (isSel) activeColor else MutedGray,
-                )
+                }
             }
         }
     }
@@ -563,8 +835,8 @@ private fun TabRow(selected: Int, activeColor: Color, onSelect: (Int) -> Unit) {
 @Composable
 private fun SectionLabel(text: String) {
     Text(
-        text,
-        style = MaterialTheme.typography.labelMedium,
+        text.uppercase(Locale.US),
+        style = MaterialTheme.typography.labelSmall,
         color = MutedGray,
         modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
     )
@@ -574,6 +846,8 @@ private fun SectionLabel(text: String) {
 private fun ScriptTab(
     idea: IdeaContainer,
     editing: Boolean,
+    selectedHookIndex: Int,
+    onSelectHook: (Int) -> Unit,
     caption: String,
     onCaption: (String) -> Unit,
     cta: String,
@@ -583,7 +857,6 @@ private fun ScriptTab(
     onCopyScript: () -> Unit,
 ) {
     val scriptAccent = Color(0xFF3B6790)
-    val scriptWell = Color(0xFFE9EFF5)
     val scriptPill = Color(0xFFDFE8F0)
 
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
@@ -592,7 +865,7 @@ private fun ScriptTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Hook Options", style = MaterialTheme.typography.labelMedium, color = MutedGray)
+            Text("HOOK OPTIONS", style = MaterialTheme.typography.labelSmall, color = MutedGray)
             Surface(
                 onClick = onRegenerateHooks,
                 enabled = !regeneratingHooks,
@@ -614,27 +887,66 @@ private fun ScriptTab(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = scriptAccent,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
         }
         Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             idea.assets.hookOptions.forEachIndexed { i, hook ->
+                val isSelected = i == selectedHookIndex
                 Surface(
+                    onClick = { onSelectHook(i) },
                     shape = InnerTileShape,
-                    color = scriptWell,
-                    border = null,
-                    modifier = Modifier.fillMaxWidth(),
+                    color = if (isSelected) CardSurface else SoftWell,
+                    border = if (isSelected) BorderStroke(1.5.dp, InkBlack) else null,
+                    shadowElevation = if (isSelected) 2.dp else 0.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .springPressScale(0.98f),
                 ) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-                        Text(
-                            "${i + 1}.",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = scriptAccent,
-                            modifier = Modifier.padding(end = 10.dp, top = 1.dp),
-                        )
-                        Text(hook, style = MaterialTheme.typography.bodyMedium, color = InkBlack)
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (isSelected) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Surface(
+                                    shape = PillShape,
+                                    color = InkBlack,
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        PixelCheckIcon(tint = CardSurface, size = 9.dp)
+                                        Text(
+                                            text = "Primary",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = CardSurface,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.Top) {
+                            Text(
+                                "${i + 1}.",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isSelected) InkBlack else scriptAccent,
+                                modifier = Modifier.padding(end = 10.dp, top = 1.dp),
+                            )
+                            Text(
+                                hook,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                                color = InkBlack,
+                            )
+                        }
                     }
                 }
             }
@@ -647,7 +959,7 @@ private fun ScriptTab(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Caption / Script", style = MaterialTheme.typography.labelMedium, color = MutedGray)
+            Text("CAPTION / SCRIPT", style = MaterialTheme.typography.labelSmall, color = MutedGray)
             Surface(
                 onClick = onCopyScript,
                 shape = PillShape,
@@ -664,6 +976,8 @@ private fun ScriptTab(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = InkBlack,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
@@ -712,11 +1026,18 @@ private fun ScriptTab(
 }
 
 @Composable
-private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
+private fun CreativesTab(
+    idea: IdeaContainer,
+    editing: Boolean,
+    draftShots: List<ShotItem>,
+    onShotDescriptionChange: (Int, String) -> Unit,
+    onCopyShotList: () -> Unit,
+) {
     val cd = idea.creativeDirection
     val creativeAccent = Color(0xFF9B4A55)
     val creativeWell = Color(0xFFF3EAEB)
     val creativePill = Color(0xFFEBDDDF)
+    val shotsToDisplay = if (editing && draftShots.isNotEmpty()) draftShots else cd.shotList
 
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
         Text("Visual Style", style = MaterialTheme.typography.labelMedium, color = MutedGray)
@@ -755,7 +1076,7 @@ private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            cd.shotList.forEachIndexed { i, shot ->
+            shotsToDisplay.forEachIndexed { i, shot ->
                 Surface(
                     shape = InnerTileShape,
                     color = creativeWell,
@@ -769,14 +1090,27 @@ private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
                         ) {
                             Text("${i + 1}", style = MaterialTheme.typography.labelSmall, color = CardSurface)
                         }
-                        Column(Modifier.padding(start = 12.dp)) {
+                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
                             Text(shot.timestamp, style = MaterialTheme.typography.titleSmall, color = InkBlack)
-                            Text(
-                                shot.description,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MutedGray,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
+                            if (editing) {
+                                OutlinedTextField(
+                                    value = shot.description,
+                                    onValueChange = { onShotDescriptionChange(i, it) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 6.dp),
+                                    shape = InnerTileShape,
+                                    colors = softFieldColors(),
+                                    minLines = 2,
+                                )
+                            } else {
+                                Text(
+                                    shot.description,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MutedGray,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -796,7 +1130,10 @@ private fun CreativesTab(idea: IdeaContainer, onCopyShotList: () -> Unit) {
 @Composable
 private fun ScheduleTab(
     idea: IdeaContainer,
+    isSynced: Boolean,
+    scheduledForOverride: String?,
     onUpdateSchedule: (date: String, day: String, time: String) -> Unit,
+    onViewInDrafted: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val s = idea.schedule
@@ -836,44 +1173,132 @@ private fun ScheduleTab(
         ).show()
     }
 
-    SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(IntrinsicSize.Min),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            InfoTile(
-                label = "Date",
-                value = formatDate(s.recommendedDate, "MMM d"),
-                editable = true,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                onClick = openDatePicker,
-            )
-            InfoTile(
-                label = "Day",
-                value = s.recommendedDay.take(3),
-                editable = false,
-                modifier = Modifier.weight(0.85f).fillMaxHeight(),
-            )
-            InfoTile(
-                label = "Time",
-                value = formatTime(s.recommendedTime),
-                editable = true,
-                modifier = Modifier.weight(1.1f).fillMaxHeight(),
-                onClick = openTimePicker,
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (isSynced) {
+            DraftedHandoffCard(
+                idea = idea,
+                scheduledForOverride = scheduledForOverride,
+                onViewInDrafted = onViewInDrafted,
             )
         }
-        Text(
-            "Tap Date or Time to customize your posting slot.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MutedGray,
-            modifier = Modifier.padding(top = 10.dp),
-        )
-        HorizontalDivider(Modifier.padding(top = 12.dp), color = SubtleDivider, thickness = 1.dp)
-        SectionLabel("Why this slot")
-        Text(s.peakWindowReason, style = MaterialTheme.typography.bodyMedium, color = InkBlack)
+
+        SoftCard(Modifier.fillMaxWidth(), color = CardSurface) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                InfoTile(
+                    label = "Date",
+                    value = formatDate(s.recommendedDate, "MMM d"),
+                    editable = true,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = openDatePicker,
+                )
+                InfoTile(
+                    label = "Day",
+                    value = formatDate(s.recommendedDate, "EEE").takeIf { it != s.recommendedDate }
+                        ?: s.recommendedDay.take(3),
+                    editable = false,
+                    modifier = Modifier.weight(0.85f).fillMaxHeight(),
+                )
+                InfoTile(
+                    label = "Time",
+                    value = formatTime(s.recommendedTime),
+                    editable = true,
+                    modifier = Modifier.weight(1.1f).fillMaxHeight(),
+                    onClick = openTimePicker,
+                )
+            }
+            Text(
+                "Tap Date or Time to customize your posting slot.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedGray,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+            HorizontalDivider(Modifier.padding(top = 12.dp), color = SubtleDivider, thickness = 1.dp)
+            SectionLabel("Why this slot")
+            Text(s.peakWindowReason, style = MaterialTheme.typography.bodyMedium, color = InkBlack)
+        }
+    }
+}
+
+@Composable
+private fun DraftedHandoffCard(
+    idea: IdeaContainer,
+    scheduledForOverride: String?,
+    onViewInDrafted: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val glassBrush = Brush.linearGradient(
+        listOf(Color(0xF2FFFFFF), Color(0xD9FFFFFF), Color(0xEBFFFFFF)),
+    )
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(6.dp, InnerTileShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot),
+        shape = InnerTileShape,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Color.White),
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .clip(InnerTileShape)
+                .background(glassBrush)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x2234C759)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PixelCheckIcon(tint = StatusGreen, size = 12.dp)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Ready in Drafted",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = InkBlack,
+                    )
+                    Text(
+                        text = formatScheduleSummary(idea, scheduledForOverride),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedGray,
+                    )
+                }
+            }
+            Surface(
+                onClick = onViewInDrafted,
+                shape = PillShape,
+                color = InkBlack,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .springPressScale(0.97f),
+            ) {
+                Box(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "View in Drafted →",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = CardSurface,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -928,72 +1353,75 @@ private fun Dock(
     synced: Boolean,
     syncing: Boolean,
     onEdit: () -> Unit,
+    onCancelEdit: () -> Unit,
     onSchedule: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val dockShape = RoundedCornerShape(24.dp)
-    val dockBrush = Brush.linearGradient(
-        listOf(
-            Color(0xEBFFFFFF),
-            Color(0xCCFFFFFF),
-            Color(0xDEFFFFFF),
-        ),
-    )
-    val dockBorder = Brush.linearGradient(
-        listOf(
-            Color(0xFFFFFFFF),
-            Color(0xAAFFFFFF),
-            Color(0xD9FFFFFF),
-        ),
-    )
+    val dockShape = PillShape
     Surface(
         modifier = modifier
             .navigationBarsPadding()
             .padding(horizontal = 20.dp, vertical = 14.dp)
             .fillMaxWidth()
-            .shadow(12.dp, dockShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot),
+            .shadow(10.dp, dockShape, ambientColor = ShadowAmbient, spotColor = ShadowSpot),
         shape = dockShape,
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, dockBorder),
+        color = Color(0xF7FFFFFF),
+        border = BorderStroke(1.dp, SubtleDivider),
         shadowElevation = 0.dp,
     ) {
         Row(
             Modifier
                 .clip(dockShape)
-                .background(dockBrush)
-                .padding(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            GlassButton(
-                text = if (editing) "Save" else "Edit",
-                onClick = onEdit,
-                dark = false,
-                minHeight = 48.dp,
-                horizontalPadding = 16.dp,
-                leadingIcon = {
-                    if (editing) PixelCheckIcon(tint = InkBlack, size = 14.dp)
-                    else PixelEditIcon(tint = InkBlack, size = 14.dp)
-                },
-            )
-            GlassButton(
-                text = when {
-                    synced -> "Scheduled"
-                    syncing -> "Syncing…"
-                    else -> "Schedule to Drafted"
-                },
-                onClick = onSchedule,
-                modifier = Modifier.weight(1f),
-                dark = !synced,
-                enabled = !synced && !syncing,
-                minHeight = 48.dp,
-                horizontalPadding = 16.dp,
-                leadingIcon = {
-                    when {
-                        synced -> PixelCheckIcon(tint = InkBlack, size = 14.dp)
-                        !syncing -> PixelSendIcon(tint = CardSurface, size = 14.dp)
-                    }
-                },
-            )
+            if (editing) {
+                GlassButton(
+                    text = "Cancel",
+                    onClick = onCancelEdit,
+                    modifier = Modifier.weight(1f),
+                    dark = false,
+                    minHeight = 48.dp,
+                    horizontalPadding = 16.dp,
+                )
+                GlassButton(
+                    text = "Save",
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f),
+                    dark = true,
+                    minHeight = 48.dp,
+                    horizontalPadding = 16.dp,
+                    leadingIcon = { PixelCheckIcon(tint = CardSurface, size = 14.dp) },
+                )
+            } else {
+                GlassButton(
+                    text = "Edit",
+                    onClick = onEdit,
+                    dark = false,
+                    minHeight = 48.dp,
+                    horizontalPadding = 16.dp,
+                    leadingIcon = { PixelEditIcon(tint = InkBlack, size = 14.dp) },
+                )
+                GlassButton(
+                    text = when {
+                        synced -> "Scheduled"
+                        syncing -> "Syncing…"
+                        else -> "Schedule to Drafted"
+                    },
+                    onClick = onSchedule,
+                    modifier = Modifier.weight(1f),
+                    dark = !synced,
+                    enabled = !synced && !syncing,
+                    minHeight = 48.dp,
+                    horizontalPadding = 16.dp,
+                    leadingIcon = {
+                        when {
+                            synced -> PixelCheckIcon(tint = InkBlack, size = 14.dp)
+                            !syncing -> PixelSendIcon(tint = CardSurface, size = 14.dp)
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -1001,7 +1429,12 @@ private fun Dock(
 private class PixelConfetti(val x: Float, val delay: Float, val speed: Float, val color: Color, val sizePx: Float)
 
 @Composable
-private fun CelebrationOverlay(scheduledFor: String?, onDone: () -> Unit) {
+private fun CelebrationOverlay(
+    idea: IdeaContainer,
+    scheduledFor: String?,
+    onViewInDrafted: () -> Unit,
+    onDone: () -> Unit,
+) {
     val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) { progress.animateTo(1f, tween(2600, easing = LinearEasing)) }
     val palette = listOf(InkBlack, MutedGray, SubtleDivider, StatusGreen)
@@ -1033,21 +1466,17 @@ private fun CelebrationOverlay(scheduledFor: String?, onDone: () -> Unit) {
                     color = InkBlack,
                     textAlign = TextAlign.Center,
                 )
-                scheduledFor?.let {
-                    val date = formatDate(it.substringBefore('T'), "EEE, MMM d")
-                    val time = it.substringAfter('T', "").takeIf { t -> t.isNotBlank() }?.let(::formatTime)
-                    Text(
-                        listOfNotNull(date, time).joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MutedGray,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
+                DraftedHandoffCard(
+                    idea = idea,
+                    scheduledForOverride = scheduledFor,
+                    onViewInDrafted = onViewInDrafted,
+                    modifier = Modifier.padding(top = 14.dp),
+                )
                 GlassButton(
                     text = "Done",
                     onClick = onDone,
-                    dark = true,
-                    modifier = Modifier.padding(top = 20.dp).fillMaxWidth(),
+                    dark = false,
+                    modifier = Modifier.padding(top = 12.dp).fillMaxWidth(),
                 )
             }
         }

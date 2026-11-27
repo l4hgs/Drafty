@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from functools import lru_cache
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from supabase import Client, create_client
 
@@ -224,28 +225,139 @@ def _delete_content_container(container_id: str) -> dict:
 
 
 
+def _map_drafted_platforms(raw_platforms: list[str] | None) -> list[str]:
+    """Map Drafty's freeform platform strings to Drafted's PlatformType enum names."""
+    mapped: list[str] = []
+    for raw in raw_platforms or []:
+        key = str(raw).strip().lower()
+        canonical = (
+            "tiktok" if ("tiktok" in key or "tik tok" in key)
+            else "youtube" if ("youtube" in key or "shorts" in key or key == "yt")
+            else "instagram" if ("instagram" in key or "reels" in key or key == "ig")
+            else "linkedin" if "linkedin" in key
+            else None
+        )
+        if canonical and canonical not in mapped:
+            mapped.append(canonical)
+    return mapped or ["tiktok"]
+
+
+def _map_drafted_format(visual_type: str | None) -> str:
+    """Map Drafty's visual_type string to Drafted's FormatType enum name."""
+    key = str(visual_type or "").strip().lower()
+    if "carousel" in key or "slide" in key:
+        return "carousel"
+    if "long" in key or "vlog" in key or "youtube" in key or "tutorial" in key:
+        return "long_video"
+    if "brand" in key or "sponsor" in key or "ad" in key:
+        return "brand_deal"
+    return "short_form"
+
+
+def _format_display_time(hhmm: str | None) -> str | None:
+    if not hhmm:
+        return None
+    try:
+        return datetime.strptime(hhmm.strip(), "%H:%M").strftime("%I:%M %p").lstrip("0")
+    except ValueError:
+        return hhmm.strip()
+
+
+def _deterministic_drafted_post_id(container_id: str) -> str:
+    """Drafted's Dart Post.id is an int stored as text; derive a stable positive 12-digit numeric string."""
+    return str((UUID(container_id).int % 900_000_000_000) + 100_000_000_000)
+
+
 def _sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | None = None) -> dict:
-    table = _db().table("content_containers")
-    found = table.select("id, schedule").eq("id", container_id).limit(1).execute()
+    db = _db()
+    table = db.table("content_containers")
+    found = table.select("*").eq("id", container_id).limit(1).execute()
     if not found.data:
         raise ContainerNotFoundError(container_id)
-    # NOTE: Drafted shares this Supabase project, so flipping the flag is the push.
+
+    row = dict(found.data[0])
     patch_data: dict = {"is_pushed_to_drafted": True}
-    sched = found.data[0].get("schedule") or {}
+    title = row.get("title") or "Untitled Draft"
+    assets = dict(row.get("assets") or {})
+    metadata = dict(row.get("metadata") or {})
+    creative = dict(row.get("creative_direction") or {})
+    sched = dict(row.get("schedule") or {})
+    selected_hook_index = 0
+
     if updates is not None:
+        selected_hook_index = max(0, updates.selected_hook_index)
         if updates.title is not None:
-            patch_data["title"] = updates.title
+            title = updates.title
+            patch_data["title"] = title
         if updates.assets is not None:
-            patch_data["assets"] = updates.assets.model_dump(mode="json")
+            assets = updates.assets.model_dump(mode="json")
+            patch_data["assets"] = assets
         if updates.schedule is not None:
             sched = updates.schedule.model_dump(mode="json")
             patch_data["schedule"] = sched
-    table.update(patch_data).eq("id", container_id).execute()
-    date, time_ = sched.get("recommended_date"), sched.get("recommended_time")
+
+    date_str, time_str = sched.get("recommended_date"), sched.get("recommended_time")
+    scheduled_for = f"{date_str}T{time_str}" if date_str and time_str else None
+
+    # Upsert directly into Drafted's unified `public.posts` table
+    drafted_post_id = row.get("drafted_post_id") or _deterministic_drafted_post_id(container_id)
+    platforms = _map_drafted_platforms(metadata.get("target_platforms"))
+    hooks = assets.get("hook_options") or []
+    primary_hook = (
+        hooks[min(selected_hook_index, len(hooks) - 1)]
+        if hooks
+        else (row.get("summary") or "")
+    )
+    caption_parts = [p for p in (assets.get("primary_caption"), assets.get("cta")) if p and str(p).strip()]
+    caption_text = "\n\n".join(str(p).strip() for p in caption_parts)
+    hashtags_str = " ".join(str(h).strip() for h in (assets.get("hashtags") or []) if str(h).strip())
+    quick_chips = [
+        str(c).strip()
+        for c in (metadata.get("content_pillar"), metadata.get("tone"))
+        if c and str(c).strip()
+    ]
+
+    drafted_post_payload = {
+        "id": str(drafted_post_id),
+        "user_id": str(row.get("user_id") or "local_device"),
+        "title": title,
+        "platform": platforms[0],
+        "platforms": platforms,
+        "format_type": _map_drafted_format(creative.get("visual_type")),
+        "scheduled_at": f"{date_str}T{time_str}:00+00:00" if date_str and time_str else None,
+        "is_backlog": False,
+        "status": "to_shoot",
+        "display_time_label": _format_display_time(time_str),
+        "hook_preview": f'Hook: "{primary_hook}"' if primary_hook else None,
+        "progress": 0.25,
+        "quick_chips": quick_chips,
+        "caption_text": caption_text or None,
+        "hashtags": hashtags_str or None,
+    }
+    try:
+        db.table("posts").upsert(drafted_post_payload, on_conflict="id").execute()
+        patch_data["drafted_post_id"] = str(drafted_post_id)
+    except Exception:
+        # Graceful fallback if 002_unified_drafted_and_auth.sql hasn't been executed on Supabase yet.
+        logger.warning(
+            "Could not upsert into Drafted public.posts for container %s; run migration 002_unified_drafted_and_auth.sql",
+            container_id,
+            exc_info=True,
+        )
+        drafted_post_id = None
+
+    try:
+        table.update(patch_data).eq("id", container_id).execute()
+    except Exception:
+        # Retry without drafted_post_id if migration 002 hasn't added that column yet.
+        patch_data.pop("drafted_post_id", None)
+        table.update(patch_data).eq("id", container_id).execute()
+
     return {
         "container_id": container_id,
-        "scheduled_for": f"{date}T{time_}" if date and time_ else None,
+        "scheduled_for": scheduled_for,
         "sync_status": "synced",
+        "drafted_post_id": drafted_post_id,
     }
 
 

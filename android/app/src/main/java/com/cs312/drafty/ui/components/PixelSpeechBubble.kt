@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -19,7 +20,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,19 +33,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cs312.drafty.ui.IdeaCard
 import com.cs312.drafty.ui.UserProfileState
+import com.cs312.drafty.ui.theme.CardSurface
+import com.cs312.drafty.ui.theme.MutedGray
+import com.cs312.drafty.ui.theme.ShadowAmbient
+import com.cs312.drafty.ui.theme.ShadowSpot
+import com.cs312.drafty.ui.theme.SubtleDivider
 import kotlinx.coroutines.delay
 
 /**
@@ -85,8 +88,8 @@ fun buildAmbientIdeaPrompts(
 }
 
 /**
- * Low-contrast ambient pixel speech bubble with stepped 1-bit pixel corners,
- * a stepped speech tail, and a subtle pixel drop-shadow offset.
+ * Clean, smooth modern chat bubble (rounded capsule with a subtle chat corner)
+ * matching Drafty's crisp light-surface UI.
  */
 @Composable
 fun PixelSpeechBubble(
@@ -95,10 +98,12 @@ fun PixelSpeechBubble(
     tailOnRight: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
-    val bubbleFill = Color(0xFFFAFAFC)
-    val bubbleBorder = Color(0xFFDCDCE2)
-    val bubbleShadow = Color(0x14000000)
-    val textColor = Color(0xFF8E8E93)
+    val bubbleShape = RoundedCornerShape(
+        topStart = 18.dp,
+        topEnd = 18.dp,
+        bottomStart = if (tailOnRight) 18.dp else 4.dp,
+        bottomEnd = if (tailOnRight) 4.dp else 18.dp,
+    )
 
     val clickMod = if (onClick != null) {
         Modifier.clickable(
@@ -110,81 +115,33 @@ fun PixelSpeechBubble(
         Modifier
     }
 
-    Box(
+    Surface(
         modifier = modifier
             .then(clickMod)
-            .widthIn(min = 124.dp, max = 192.dp)
-            .drawBehind {
-                val tailH = 7.dp.toPx()
-                val w = size.width
-                val bodyH = (size.height - tailH).coerceAtLeast(24.dp.toPx())
-                val radius = 16.dp.toPx().coerceAtMost(bodyH * 0.48f)
-                val cr = CornerRadius(radius, radius)
-                val borderW = 1.2.dp.toPx()
-                val shadowOffset = 2.dp.toPx()
-
-                fun buildTailPath(dx: Float, dy: Float): Path {
-                    val baseX = if (tailOnRight) w - 24.dp.toPx() else 18.dp.toPx()
-                    val tipX = if (tailOnRight) baseX + 8.dp.toPx() else baseX - 8.dp.toPx()
-                    return Path().apply {
-                        moveTo(baseX + dx, bodyH - 1.5.dp.toPx() + dy)
-                        quadraticTo(
-                            baseX + dx,
-                            bodyH + tailH * 0.65f + dy,
-                            tipX + dx,
-                            bodyH + tailH + dy,
-                        )
-                        quadraticTo(
-                            (if (tailOnRight) baseX - 2.dp.toPx() else baseX + 2.dp.toPx()) + dx,
-                            bodyH + tailH * 0.65f + dy,
-                            (if (tailOnRight) baseX - 10.dp.toPx() else baseX + 10.dp.toPx()) + dx,
-                            bodyH - 1.5.dp.toPx() + dy,
-                        )
-                        close()
-                    }
-                }
-
-                // 1) Soft ambient drop shadow
-                drawRoundRect(
-                    color = bubbleShadow,
-                    topLeft = Offset(0f, shadowOffset),
-                    size = Size(w, bodyH),
-                    cornerRadius = cr,
-                )
-                drawPath(buildTailPath(0f, shadowOffset), color = bubbleShadow)
-
-                // 2) Rounded speech bubble fill + subtle border
-                drawRoundRect(
-                    color = bubbleFill,
-                    topLeft = Offset.Zero,
-                    size = Size(w, bodyH),
-                    cornerRadius = cr,
-                )
-                drawRoundRect(
-                    color = bubbleBorder,
-                    topLeft = Offset.Zero,
-                    size = Size(w, bodyH),
-                    cornerRadius = cr,
-                    style = Stroke(width = borderW),
-                )
-
-                // 3) Smooth rounded speech tail seamlessly joined to body
-                val tailPath = buildTailPath(0f, 0f)
-                drawPath(tailPath, color = bubbleBorder, style = Stroke(width = borderW))
-                drawPath(tailPath, color = bubbleFill)
-            }
-            .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 16.dp),
+            .widthIn(min = 124.dp, max = 196.dp)
+            .shadow(
+                elevation = 4.dp,
+                shape = bubbleShape,
+                ambientColor = ShadowAmbient,
+                spotColor = ShadowSpot,
+            ),
+        shape = bubbleShape,
+        color = CardSurface,
+        border = BorderStroke(1.dp, SubtleDivider),
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall.copy(
-                fontSize = 11.5.sp,
-                lineHeight = 15.sp,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             ),
-            color = textColor,
+            color = MutedGray,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         )
     }
 }
@@ -198,8 +155,9 @@ fun AmbientIdeaBubblesLayer(
     prompts: List<String>,
     onBubbleTap: (String) -> Unit,
     modifier: Modifier = Modifier,
+    maxBubbles: Int = 3,
 ) {
-    if (prompts.isEmpty()) return
+    if (prompts.isEmpty() || maxBubbles <= 0) return
 
     var cycleIndex by remember(prompts) { mutableIntStateOf(0) }
     LaunchedEffect(prompts) {
@@ -270,42 +228,46 @@ fun AmbientIdeaBubblesLayer(
         }
 
         // Upper-right ambient bubble (staggered below profile button, clear of center greeting)
-        Box(
-            modifier = Modifier
-                .align(BiasAlignment(0.90f, -0.50f))
-                .offset(y = floatB.dp)
-                .alpha(0.64f),
-        ) {
-            AnimatedContent(
-                targetState = p1,
-                transitionSpec = { fadeIn(tween(650)) togetherWith fadeOut(tween(500)) },
-                label = "bubblePrompt1",
-            ) { text ->
-                PixelSpeechBubble(
-                    text = text,
-                    tailOnRight = true,
-                    onClick = { onBubbleTap(text) },
-                )
+        if (maxBubbles >= 2) {
+            Box(
+                modifier = Modifier
+                    .align(BiasAlignment(0.90f, -0.50f))
+                    .offset(y = floatB.dp)
+                    .alpha(0.64f),
+            ) {
+                AnimatedContent(
+                    targetState = p1,
+                    transitionSpec = { fadeIn(tween(650)) togetherWith fadeOut(tween(500)) },
+                    label = "bubblePrompt1",
+                ) { text ->
+                    PixelSpeechBubble(
+                        text = text,
+                        tailOnRight = true,
+                        onClick = { onBubbleTap(text) },
+                    )
+                }
             }
         }
 
         // Lower-left ambient bubble (below greeting & quick-resume pill, clear of bottom navbar)
-        Box(
-            modifier = Modifier
-                .align(BiasAlignment(-0.82f, 0.34f))
-                .offset(y = floatC.dp)
-                .alpha(0.66f),
-        ) {
-            AnimatedContent(
-                targetState = p2,
-                transitionSpec = { fadeIn(tween(650)) togetherWith fadeOut(tween(500)) },
-                label = "bubblePrompt2",
-            ) { text ->
-                PixelSpeechBubble(
-                    text = text,
-                    tailOnRight = false,
-                    onClick = { onBubbleTap(text) },
-                )
+        if (maxBubbles >= 3) {
+            Box(
+                modifier = Modifier
+                    .align(BiasAlignment(-0.82f, 0.34f))
+                    .offset(y = floatC.dp)
+                    .alpha(0.66f),
+            ) {
+                AnimatedContent(
+                    targetState = p2,
+                    transitionSpec = { fadeIn(tween(650)) togetherWith fadeOut(tween(500)) },
+                    label = "bubblePrompt2",
+                ) { text ->
+                    PixelSpeechBubble(
+                        text = text,
+                        tailOnRight = false,
+                        onClick = { onBubbleTap(text) },
+                    )
+                }
             }
         }
     }

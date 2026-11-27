@@ -68,6 +68,7 @@ import com.cs312.drafty.ui.theme.MutedGray
 import com.cs312.drafty.ui.theme.SoftWell
 import com.cs312.drafty.ui.theme.StatusGreen
 import com.cs312.drafty.ui.theme.StatusRed
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.PI
 import kotlin.math.cos
@@ -116,6 +117,8 @@ fun LiquidGlassRecordingOverlay(
     isCelebratingSave: Boolean,
     onDismissError: () -> Unit,
     activePrompt: String? = null,
+    lockDragProgress: Float = 0f,
+    isLocked: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val expandProgress by animateFloatAsState(
@@ -261,6 +264,8 @@ fun LiquidGlassRecordingOverlay(
                             cancelDragProgress = cancelDragProgress,
                             isCancelZone = isCancelZone,
                             activePrompt = activePrompt,
+                            lockDragProgress = lockDragProgress,
+                            isLocked = isLocked,
                         )
                     }
                     "processing" -> {
@@ -577,11 +582,15 @@ private fun LiquidRecordingContent(
     cancelDragProgress: Float,
     isCancelZone: Boolean,
     activePrompt: String? = null,
+    lockDragProgress: Float = 0f,
+    isLocked: Boolean = false,
 ) {
     val clampedCancel = cancelDragProgress.coerceIn(0f, 1f)
+    val clampedLock = lockDragProgress.coerceIn(0f, 1f)
     val hintMuted = Color(0xFF8E8E93)
     val hintCoral = Color(0xFFE53935)
     val hintColor = lerp(hintMuted, hintCoral, clampedCancel)
+    val lockColor = lerp(hintMuted, InkBlack, clampedLock)
     val mascotScale = 1f + 0.06f * voiceLevel
 
     Column(
@@ -616,12 +625,16 @@ private fun LiquidRecordingContent(
             amplitudeFlow = amplitudeFlow,
         )
         Text(
-            text = if (isCancelZone) "Release to cancel" else "Listening…",
+            text = when {
+                isLocked -> "Hands-free recording…"
+                isCancelZone -> "Release to cancel"
+                else -> "Listening…"
+            },
             style = MaterialTheme.typography.titleLarge.copy(
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
             ),
-            color = if (isCancelZone) hintCoral else InkBlack,
+            color = if (isCancelZone && !isLocked) hintCoral else InkBlack,
             modifier = Modifier.padding(top = 14.dp),
         )
         Text(
@@ -642,37 +655,83 @@ private fun LiquidRecordingContent(
                 .fillMaxWidth()
                 .height(76.dp),
         )
-        // Spatial upward chevron + slide-to-cancel caption
-        Column(
-            modifier = Modifier.padding(top = 18.dp, start = 32.dp, end = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = "↑",
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                ),
-                color = hintColor,
-                modifier = Modifier.graphicsLayer {
-                    translationY = -10.dp.toPx() * clampedCancel
-                    scaleX = 1f + 0.18f * clampedCancel
-                    scaleY = 1f + 0.18f * clampedCancel
-                },
-            )
-            Text(
-                text = if (isCancelZone) "Release to cancel" else "Release to draft · Slide up to cancel",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isCancelZone) hintCoral else hintColor,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+        if (isLocked) {
+            Row(
+                modifier = Modifier
+                    .padding(top = 18.dp)
+                    .clip(CircleShape)
+                    .background(SoftWell.copy(alpha = 0.9f))
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                PixelLockIcon(tint = InkBlack, size = 12.dp)
+                Text(
+                    text = "Locked · Tap Stop & Draft below when done",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = InkBlack,
+                )
+            }
+        } else {
+            // Spatial upward chevron + slide-to-cancel & slide-to-lock cues
+            Column(
+                modifier = Modifier.padding(top = 18.dp, start = 32.dp, end = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "↑",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = hintColor,
+                        modifier = Modifier.graphicsLayer {
+                            translationY = -10.dp.toPx() * clampedCancel
+                            scaleX = 1f + 0.18f * clampedCancel
+                            scaleY = 1f + 0.18f * clampedCancel
+                        },
+                    )
+                    Text(
+                        text = if (isCancelZone) "Release to cancel" else "Release to draft · Slide up to cancel",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isCancelZone) hintCoral else hintColor,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = 1f + 0.10f * clampedLock
+                        scaleY = 1f + 0.10f * clampedLock
+                    },
+                ) {
+                    Text("←", style = MaterialTheme.typography.labelSmall, color = lockColor)
+                    PixelLockIcon(tint = lockColor, size = 11.dp)
+                    Text(
+                        text = if (clampedLock > 0.75f) "Locking hands-free…" else "Slide to lock",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (clampedLock > 0.4f) FontWeight.SemiBold else FontWeight.Medium,
+                        color = lockColor,
+                    )
+                    Text("→", style = MaterialTheme.typography.labelSmall, color = lockColor)
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun LiquidProcessingContent(step: ProcessingStep) {
+    var showColdStartHint by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(6000L)
+        showColdStartHint = true
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -689,8 +748,31 @@ private fun LiquidProcessingContent(step: ProcessingStep) {
             color = InkBlack,
             modifier = Modifier.padding(top = 14.dp),
         )
+        AnimatedContent(
+            targetState = showColdStartHint,
+            transitionSpec = { fadeIn(tween(320)) togetherWith fadeOut(tween(240)) },
+            label = "coldStartReassurance",
+        ) { waking ->
+            if (waking) {
+                Text(
+                    text = "Waking up Drafty's cloud… almost there",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedGray,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            } else {
+                Text(
+                    text = if (step == ProcessingStep.TRANSCRIBING) "Listening closely to your memo" else "Organizing hooks, shots & schedule",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedGray,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
         Column(
-            modifier = Modifier.padding(top = 22.dp),
+            modifier = Modifier.padding(top = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             LiquidStepRow(

@@ -20,6 +20,7 @@ val InterFontFamily = FontFamily(
 )
 
 private val SansFont = InterFontFamily
+val MonoFont = FontFamily.Monospace
 
 val Typography = Typography(
     headlineLarge = TextStyle(
@@ -38,14 +39,14 @@ val Typography = Typography(
     ),
     headlineSmall = TextStyle(
         fontFamily = SansFont,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
         lineHeight = 26.sp,
         letterSpacing = (-0.4).sp,
     ),
     titleLarge = TextStyle(
         fontFamily = SansFont,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         fontSize = 18.sp,
         lineHeight = 24.sp,
         letterSpacing = (-0.3).sp,
@@ -59,7 +60,7 @@ val Typography = Typography(
     ),
     titleSmall = TextStyle(
         fontFamily = SansFont,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         letterSpacing = (-0.1).sp,
@@ -90,20 +91,20 @@ val Typography = Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 18.sp,
-        letterSpacing = 0.sp,
+        letterSpacing = (-0.1).sp,
     ),
     labelMedium = TextStyle(
-        fontFamily = SansFont,
+        fontFamily = MonoFont,
         fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
+        fontSize = 11.5.sp,
         lineHeight = 16.sp,
         letterSpacing = 0.4.sp,
     ),
     labelSmall = TextStyle(
-        fontFamily = SansFont,
+        fontFamily = MonoFont,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
+        fontSize = 10.5.sp,
         lineHeight = 14.sp,
-        letterSpacing = 0.4.sp,
+        letterSpacing = 0.5.sp,
     ),
 )

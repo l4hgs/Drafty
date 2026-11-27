@@ -8,12 +8,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from auth import get_authenticated_user_id
 from config import settings
 from models import (
     AudioUploadResponse,
@@ -105,9 +106,14 @@ async def health() -> dict[str, str]:
 @app.post(
     "/api/v1/users/profile",
     response_model=UserProfileResponse,
-    responses={code: {"model": ErrorResponse} for code in (422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 422, 502)},
 )
-async def upsert_profile(payload: UserProfileRequest) -> UserProfileResponse:
+async def upsert_profile(
+    payload: UserProfileRequest,
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
+) -> UserProfileResponse:
+    if auth_user_id:
+        payload = payload.model_copy(update={"user_id": UUID(auth_user_id)})
     try:
         saved = await db_service.upsert_user_profile(payload)
     except db_service.DatabaseError:
@@ -139,15 +145,17 @@ async def _validate_audio_upload(file: UploadFile, user_id: str) -> tuple[bytes,
 @app.post(
     "/api/v1/voice/upload",
     response_model=AudioUploadResponse,
-    responses={code: {"model": ErrorResponse} for code in (413, 415, 422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 413, 415, 422, 502)},
 )
 async def upload_voice_audio(
     file: UploadFile = File(...),
     user_id: str = Form(...),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
 ) -> AudioUploadResponse:
-    audio, ext, content_type = await _validate_audio_upload(file, user_id)
+    effective_user_id = auth_user_id or user_id
+    audio, ext, content_type = await _validate_audio_upload(file, effective_user_id)
     try:
-        storage_path = await db_service.upload_audio_to_storage(user_id, audio, ext, content_type, strict=True)
+        storage_path = await db_service.upload_audio_to_storage(effective_user_id, audio, ext, content_type, strict=True)
     except db_service.DatabaseError:
         logger.exception("upload_audio_to_storage failed")
         raise api_error(502, "STORAGE_FAILED", "Could not upload audio file to storage.")
@@ -157,7 +165,7 @@ async def upload_voice_audio(
 @app.post(
     "/api/v1/voice/transcribe-and-parse",
     response_model=IdeaContainer,
-    responses={code: {"model": ErrorResponse} for code in (413, 415, 422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 413, 415, 422, 502)},
 )
 async def transcribe_and_parse(
     response: Response,
@@ -165,15 +173,24 @@ async def transcribe_and_parse(
     user_id: str = Form(...),
     client_timestamp: str = Form(...),
     duration_seconds: int | None = Form(default=None),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
 ) -> IdeaContainer:
     started = time.perf_counter()
+    user_id = auth_user_id or user_id
 
     audio, ext, content_type = await _validate_audio_upload(file, user_id)
     valid_duration = duration_seconds if (duration_seconds is not None and duration_seconds >= 0) else None
+    server_now = datetime.now(timezone.utc)
     try:
         client_time = datetime.fromisoformat(client_timestamp.replace("Z", "+00:00"))
+        if client_time.tzinfo is None:
+            client_time = client_time.replace(tzinfo=timezone.utc)
+        # Guard against drifted emulator/device clocks (>24h off server UTC) while preserving local tz offset.
+        if abs((client_time.astimezone(timezone.utc) - server_now).total_seconds()) > 86_400:
+            logger.warning("Drifted client_timestamp %r; snapping to server time", client_timestamp)
+            client_time = server_now.astimezone(client_time.tzinfo)
     except ValueError:
-        client_time = datetime.now(timezone.utc)
+        client_time = server_now
         logger.warning("Bad client_timestamp %r; using server time", client_timestamp)
 
     filename = f"memo.{ext}"
@@ -260,11 +277,14 @@ async def transcribe_and_parse(
 @app.get(
     "/api/v1/containers",
     response_model=list[IdeaContainer],
-    responses={code: {"model": ErrorResponse} for code in (422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 422, 502)},
 )
-async def list_containers(user_id: str = Query(...)) -> list[IdeaContainer]:
+async def list_containers(
+    user_id: str = Query(...),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
+) -> list[IdeaContainer]:
     try:
-        uid = str(UUID(user_id))
+        uid = str(UUID(auth_user_id or user_id))
     except ValueError:
         raise api_error(422, "INVALID_USER_ID", "user_id must be a UUID.")
     try:

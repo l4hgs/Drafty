@@ -1,8 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+
+fun resolveConfig(key: String, default: String = ""): String =
+    ((project.findProperty(key) as String?) ?: localProps.getProperty(key) ?: default).trim()
 
 android {
     namespace = "com.cs312.drafty"
@@ -17,11 +27,13 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        val apiBaseUrl = (project.findProperty("DRAFTY_API_URL") as String?)
-            ?.trim()
-            ?.let { if (it.endsWith("/")) it else "$it/" }
-            ?: "http://127.0.0.1:8000/"
+        val apiBaseUrl = resolveConfig("DRAFTY_API_URL", "https://drafty-vh1d.onrender.com/")
+            .let { if (it.endsWith("/")) it else "$it/" }
+        val supabaseUrl = resolveConfig("DRAFTY_SUPABASE_URL", "").trimEnd('/')
+        val supabaseAnonKey = resolveConfig("DRAFTY_SUPABASE_ANON_KEY", "")
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

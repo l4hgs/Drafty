@@ -23,6 +23,9 @@ interface DraftyDao {
     @Query("DELETE FROM idea_containers WHERE id = :id")
     suspend fun deleteContainerById(id: String)
 
+    @Query("DELETE FROM idea_containers")
+    suspend fun clearAllContainers()
+
     // ---- Offline audio queue (FR-02) --------------------------------------
 
     @Query("SELECT * FROM pending_voice_notes ORDER BY createdAt ASC")

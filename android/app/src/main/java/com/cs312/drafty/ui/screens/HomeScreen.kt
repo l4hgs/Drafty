@@ -1,14 +1,19 @@
 package com.cs312.drafty.ui.screens
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.SystemClock
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -17,6 +22,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +40,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,15 +51,20 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,19 +80,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import com.cs312.drafty.core.auth.AuthSession
 import com.cs312.drafty.data.local.PendingVoiceNoteEntity
 import com.cs312.drafty.ui.DraftyViewModel
 import com.cs312.drafty.ui.IdeaCard
@@ -90,20 +102,28 @@ import com.cs312.drafty.ui.components.AmbientIdeaBubblesLayer
 import com.cs312.drafty.ui.components.DraftyMascot
 import com.cs312.drafty.ui.components.GlassButton
 import com.cs312.drafty.ui.components.GlassIconButton
+import com.cs312.drafty.ui.components.GlassToastHost
+import com.cs312.drafty.ui.components.HapticChoreographer
 import com.cs312.drafty.ui.components.LiquidGlassRecordingOverlay
 import com.cs312.drafty.ui.components.MascotState
 import com.cs312.drafty.ui.components.PixelCheckIcon
 import com.cs312.drafty.ui.components.PixelCloseIcon
 import com.cs312.drafty.ui.components.PixelIdeasIcon
 import com.cs312.drafty.ui.components.PixelQueueIcon
+import com.cs312.drafty.ui.components.PixelStopIcon
 import com.cs312.drafty.ui.components.PixelSyncIcon
+import com.cs312.drafty.ui.components.PixelTrashIcon
 import com.cs312.drafty.ui.components.PixelUserIcon
 import com.cs312.drafty.ui.components.PlatformLogoBadge
 import com.cs312.drafty.ui.components.SoftCard
 import com.cs312.drafty.ui.components.SoftChip
 import com.cs312.drafty.ui.components.buildAmbientIdeaPrompts
 import com.cs312.drafty.ui.components.canonicalPlatform
+import com.cs312.drafty.ui.components.rememberGlassToastState
+import com.cs312.drafty.ui.components.rememberHapticChoreographer
+import com.cs312.drafty.ui.components.springPressScale
 import com.cs312.drafty.ui.theme.AppBackground
+import com.cs312.drafty.ui.theme.CardShape
 import com.cs312.drafty.ui.theme.CardSurface
 import com.cs312.drafty.ui.theme.InkBlack
 import com.cs312.drafty.ui.theme.InnerTileShape
@@ -111,12 +131,16 @@ import com.cs312.drafty.ui.theme.MutedGray
 import com.cs312.drafty.ui.theme.ShadowAmbient
 import com.cs312.drafty.ui.theme.SheetTopShape
 import com.cs312.drafty.ui.theme.SoftWell
+import com.cs312.drafty.ui.theme.StatusAmber
 import com.cs312.drafty.ui.theme.StatusGreen
 import com.cs312.drafty.ui.theme.StatusRed
 import com.cs312.drafty.ui.theme.SubtleDivider
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.sin
@@ -126,8 +150,11 @@ import kotlin.math.sqrt
 @Composable
 fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
     val ctx = LocalContext.current
-    val haptics = LocalHapticFeedback.current
-    val cancelThresholdPx = with(LocalDensity.current) { -100.dp.toPx() }
+    val density = LocalDensity.current
+    val haptics = rememberHapticChoreographer()
+    val toastState = rememberGlassToastState()
+    val cancelThresholdPx = with(density) { -96.dp.toPx() }
+    val lockThresholdPx = with(density) { 84.dp.toPx() }
 
     val ideas by vm.recentIdeas.collectAsState()
     val pendingNotes by vm.pendingNotes.collectAsState()
@@ -140,21 +167,35 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
     var seededPrompt by rememberSaveable { mutableStateOf<String?>(null) }
 
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    var isRecordingLocked by remember { mutableStateOf(false) }
     var celebratingContainerId by remember { mutableStateOf<String?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            Toast.makeText(ctx, "Mic enabled! Hold Drafty to record.", Toast.LENGTH_SHORT).show()
+            toastState.show("Mic enabled! Hold Drafty to record.")
         } else {
-            Toast.makeText(ctx, "Microphone permission is needed to brain-dump.", Toast.LENGTH_LONG).show()
+            toastState.show("Microphone access is needed to record voice notes.")
+        }
+    }
+
+    LaunchedEffect(sheetVisible) {
+        if (!sheetVisible) {
+            isRecordingLocked = false
+            dragOffsetX = 0f
+            dragOffsetY = 0f
         }
     }
 
     LaunchedEffect(vm) {
         vm.recordingState.collect { s ->
+            if (s !is RecordingState.Recording) {
+                isRecordingLocked = false
+            }
             if (s is RecordingState.Success) {
                 celebratingContainerId = s.containerId
                 seededPrompt = null
+                haptics.onSuccess()
                 delay(650L)
                 val targetId = s.containerId
                 celebratingContainerId = null
@@ -174,10 +215,19 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
         label = "homeBackgroundBlur",
     )
     val cancelDragProgress = (dragOffsetY / cancelThresholdPx).coerceIn(0f, 1f)
+    val lockDragProgress = if (isRecordingLocked) 1f else (abs(dragOffsetX) / lockThresholdPx).coerceIn(0f, 1f)
     val ambientPrompts = remember(ideas, profile) { buildAmbientIdeaPrompts(ideas, profile) }
 
-    Box(Modifier.fillMaxSize().background(AppBackground)) {
-        // 1 & 2) Underlying Home content (ambient bubbles + Profile + centered greeting), blurred on Android 12+ while recording
+    BoxWithConstraints(Modifier.fillMaxSize().background(AppBackground)) {
+        val isLandscape = maxWidth > maxHeight && maxWidth >= 560.dp
+        val fontScale = density.fontScale
+        val maxBubbles = when {
+            isLandscape || maxHeight < 580.dp -> 0
+            maxHeight < 680.dp || fontScale > 1.2f -> 2
+            else -> 3
+        }
+
+        // 1 & 2) Underlying Home content (responsive ambient bubbles + Profile + centered greeting), blurred on Android 12+ while recording
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -190,6 +240,7 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                     },
                 ),
         ) {
+
             // Focused radial pink -> orange ombré behind the Drafty button
             Canvas(Modifier.fillMaxSize()) {
                 val w = size.width
@@ -212,9 +263,10 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                 )
             }
 
-            // Ambient background pixel speech-bubble idea prompts (tap to seed recording prompt)
+            // Responsive ambient background speech-bubble idea prompts (tap to seed recording prompt)
             AmbientIdeaBubblesLayer(
                 prompts = ambientPrompts,
+                maxBubbles = maxBubbles,
                 onBubbleTap = { prompt ->
                     seededPrompt = prompt
                 },
@@ -234,7 +286,7 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
             // 2) Optical upper-middle editorial greeting + crisp pixel '{ Drafty }' wordmark + quick-resume pill
             Column(
                 modifier = Modifier
-                    .align(BiasAlignment(0f, -0.18f))
+                    .align(BiasAlignment(0f, if (isLandscape) -0.45f else -0.18f))
                     .padding(horizontal = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -343,15 +395,16 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
             stateFlow = vm.recordingState,
             amplitudeFlow = vm.amplitude,
             cancelDragProgress = cancelDragProgress,
-            isCancelZone = dragOffsetY < cancelThresholdPx,
+            isCancelZone = !isRecordingLocked && dragOffsetY < cancelThresholdPx,
             isCelebratingSave = celebratingContainerId != null,
             onDismissError = vm::resetRecording,
             activePrompt = seededPrompt,
+            lockDragProgress = lockDragProgress,
+            isLocked = isRecordingLocked,
             modifier = Modifier.zIndex(1f),
         )
 
         // 4) Smooth, symmetric notched center-cradle liquid-glass bottom navbar (zero overlap, zIndex 2)
-        val density = LocalDensity.current
         val dockShape = remember(density) {
             val cradleR = with(density) { 54.dp.toPx() }
             val circleCenterY = with(density) { (-13).dp.toPx() }
@@ -485,12 +538,14 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                 color = Color(0xFF8E8E93),
                 modifier = Modifier
-                    .padding(bottom = 42.dp)
+                    .padding(bottom = if (isLandscape) 24.dp else 42.dp)
                     .alpha(chromeAlpha),
             )
 
             Box(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (isLandscape) Modifier.widthIn(max = 460.dp) else Modifier),
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 // Compact frosted glassmorphic pill base (64.dp tall, narrower horizontal span)
@@ -580,9 +635,11 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                     modifier = Modifier
                         .offset(y = (-30).dp)
                         .size(94.dp)
+                        .springPressScale(0.94f)
                         .pointerInput(Unit) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
+                                if (isRecordingLocked) return@awaitEachGesture
                                 val hasMic = ContextCompat.checkSelfPermission(
                                     ctx,
                                     Manifest.permission.RECORD_AUDIO,
@@ -592,35 +649,56 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                                     return@awaitEachGesture
                                 }
 
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptics.onPressDown()
                                 val pressStartMs = SystemClock.elapsedRealtime()
                                 dragOffsetY = 0f
+                                dragOffsetX = 0f
+                                var wasInCancelZone = false
                                 vm.startRecording()
 
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull() ?: break
                                     if (!change.pressed) break
-                                    dragOffsetY += change.positionChange().y
+                                    val delta = change.positionChange()
+                                    dragOffsetY += delta.y
+                                    dragOffsetX += delta.x
                                     change.consume()
+
+                                    val nowInCancelZone = dragOffsetY < cancelThresholdPx
+                                    if (nowInCancelZone && !wasInCancelZone) {
+                                        haptics.onThresholdCross()
+                                    }
+                                    wasInCancelZone = nowInCancelZone
+
+                                    // Horizontal slide past threshold engages hands-free Lock-to-Record
+                                    if (!nowInCancelZone && abs(dragOffsetX) >= lockThresholdPx) {
+                                        haptics.onLockEngaged()
+                                        isRecordingLocked = true
+                                        dragOffsetX = 0f
+                                        dragOffsetY = 0f
+                                        break
+                                    }
                                 }
-                                if (vm.recordingState.value is RecordingState.Recording) {
+                                if (!isRecordingLocked && vm.recordingState.value is RecordingState.Recording) {
                                     val heldMs = SystemClock.elapsedRealtime() - pressStartMs
                                     if (dragOffsetY < cancelThresholdPx || heldMs < 700L) {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptics.onThresholdCross()
                                         vm.cancelRecording()
                                     } else {
+                                        haptics.onReleaseDraft()
                                         vm.stopRecordingAndProcess(vm.userId)
                                     }
                                 }
                                 dragOffsetY = 0f
+                                dragOffsetX = 0f
                             }
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    // Tactile frosted glass thumb anchor ring pulsing with voice amplitude while holding
+                    // Tactile frosted glass thumb anchor ring pulsing with voice amplitude while holding (hidden when locked)
                     ThumbAnchorRing(
-                        visible = overlayVisible,
+                        visible = overlayVisible && !isRecordingLocked,
                         amplitudeFlow = vm.amplitude,
                         isCancelZone = dragOffsetY < cancelThresholdPx,
                     )
@@ -659,19 +737,109 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                 }
             }
         }
+        // 5) Hands-Free Locked Recording Controls (Stop & Draft + Cancel, zIndex 3)
+        AnimatedVisibility(
+            visible = isRecordingLocked && overlayVisible,
+            enter = fadeIn() + scaleIn(initialScale = 0.92f),
+            exit = fadeOut() + scaleOut(targetScale = 0.92f),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(3f)
+                .navigationBarsPadding()
+                .padding(bottom = 30.dp, start = 24.dp, end = 24.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GlassIconButton(
+                    onClick = {
+                        haptics.onThresholdCross()
+                        isRecordingLocked = false
+                        vm.cancelRecording()
+                    },
+                    size = 52.dp,
+                ) {
+                    PixelCloseIcon(tint = InkBlack, size = 14.dp)
+                }
+                GlassButton(
+                    text = "Stop & Draft",
+                    dark = true,
+                    minHeight = 52.dp,
+                    horizontalPadding = 22.dp,
+                    leadingIcon = { PixelStopIcon(tint = CardSurface, size = 13.dp) },
+                    onClick = {
+                        haptics.onReleaseDraft()
+                        isRecordingLocked = false
+                        vm.stopRecordingAndProcess(vm.userId)
+                    },
+                )
+            }
+        }
+
+        // 6) Floating frosted-glass toast host (replaces system Android Toasts, zIndex 4)
+        GlassToastHost(
+            state = toastState,
+            bottomPadding = 128.dp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(4f),
+        )
     }
 
+    val authSession by vm.authSession.collectAsState()
     if (showProfileSheet) {
         CreatorProfileSheet(
             profile = profile,
+            authSession = authSession,
+            authConfigured = vm.isSupabaseAuthConfigured,
             onDismiss = { showProfileSheet = false },
+            onSignInWithEmail = { email, password, onDone ->
+                vm.signInWithEmail(email, password) { res ->
+                    onDone()
+                    res.onSuccess {
+                        haptics.onSuccess()
+                        toastState.show("Signed in to your Drafted account!")
+                        showProfileSheet = false
+                    }.onFailure { err ->
+                        toastState.show(err.message ?: "Couldn't sign in.")
+                    }
+                }
+            },
+            onSignUpWithEmail = { email, password, brandName, brandVoice, onDone ->
+                vm.signUpWithEmail(email, password, brandName, brandVoice) { res ->
+                    onDone()
+                    res.onSuccess {
+                        haptics.onSuccess()
+                        toastState.show("Account created & synced with Drafted!")
+                        showProfileSheet = false
+                    }.onFailure { err ->
+                        toastState.show(err.message ?: "Couldn't create account.")
+                    }
+                }
+            },
+            onContinueWithGoogle = {
+                if (!vm.isSupabaseAuthConfigured) {
+                    toastState.show("Add DRAFTY_SUPABASE_URL & ANON_KEY to local.properties first.")
+                } else {
+                    val uri = vm.authManager.buildGoogleOAuthUri()
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                }
+            },
+            onSignOut = {
+                vm.signOut()
+                haptics.onPressDown()
+                toastState.show("Signed out.")
+                showProfileSheet = false
+            },
             onSave = { email, brandName, brandVoice ->
                 vm.saveUserProfile(email, brandName, brandVoice) { res ->
                     res.onSuccess {
-                        Toast.makeText(ctx, "Creator profile saved!", Toast.LENGTH_SHORT).show()
+                        haptics.onSuccess()
+                        toastState.show("Creator profile saved!")
                         showProfileSheet = false
                     }.onFailure { err ->
-                        Toast.makeText(ctx, err.message ?: "Failed to save profile", Toast.LENGTH_LONG).show()
+                        toastState.show(err.message ?: "Couldn't save your profile right now.")
                     }
                 }
             },
@@ -690,10 +858,14 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
     if (showIdeasSheet) {
         RecentIdeasSheet(
             ideas = ideas,
+            haptics = haptics,
             onDismiss = { showIdeasSheet = false },
             onOpenContainer = { id ->
                 showIdeasSheet = false
                 onOpenContainer(id)
+            },
+            onDeleteIdea = { id ->
+                vm.deleteContainer(id) {}
             },
         )
     }
@@ -899,15 +1071,35 @@ private fun OfflineQueueSheet(
 @Composable
 private fun RecentIdeasSheet(
     ideas: List<IdeaCard>,
+    haptics: HapticChoreographer,
     onDismiss: () -> Unit,
     onOpenContainer: (String) -> Unit,
+    onDeleteIdea: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val sheetToastState = rememberGlassToastState()
     var query by rememberSaveable { mutableStateOf("") }
     var selectedFilter by rememberSaveable { mutableStateOf("All") }
+    var pendingDeleteIds by remember { mutableStateOf(setOf<String>()) }
+    val pendingDeleteJobs = remember { mutableMapOf<String, Job>() }
 
-    val filterOptions = remember(ideas) {
-        val platforms = ideas
+    // If the user dismisses the sheet while a delete undo timer is still active, commit it cleanly.
+    DisposableEffect(Unit) {
+        onDispose {
+            val remaining = pendingDeleteIds.toList()
+            pendingDeleteJobs.values.forEach { it.cancel() }
+            pendingDeleteJobs.clear()
+            remaining.forEach { id -> onDeleteIdea(id) }
+        }
+    }
+
+    val visibleIdeas = remember(ideas, pendingDeleteIds) {
+        ideas.filterNot { it.idea.id in pendingDeleteIds }
+    }
+
+    val filterOptions = remember(visibleIdeas) {
+        val platforms = visibleIdeas
             .flatMap { it.idea.metadata.targetPlatforms }
             .map(::canonicalPlatform)
             .distinct()
@@ -915,9 +1107,9 @@ private fun RecentIdeasSheet(
         listOf("All", "Synced", "Drafts") + platforms
     }
 
-    val filteredIdeas = remember(ideas, query, selectedFilter) {
+    val filteredIdeas = remember(visibleIdeas, query, selectedFilter) {
         val q = query.trim().lowercase()
-        ideas.filter { card ->
+        visibleIdeas.filter { card ->
             val matchesFilter = when (selectedFilter) {
                 "All" -> true
                 "Synced" -> card.isPushed
@@ -944,109 +1136,246 @@ private fun RecentIdeasSheet(
         shape = SheetTopShape,
         dragHandle = { SoftSheetDragHandle() },
     ) {
-        Column(
+        Box(
             Modifier
                 .fillMaxWidth()
                 .heightIn(max = 600.dp)
                 .navigationBarsPadding(),
         ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("Recent Ideas", style = MaterialTheme.typography.headlineSmall, color = InkBlack)
-                Text("${filteredIdeas.size} of ${ideas.size}", style = MaterialTheme.typography.labelMedium, color = MutedGray)
-            }
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Recent Ideas", style = MaterialTheme.typography.headlineSmall, color = InkBlack)
+                }
 
-            if (ideas.isNotEmpty()) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("Search ideas, platforms, pillars…", color = MutedGray) },
-                    singleLine = true,
-                    shape = InnerTileShape,
-                    colors = softFieldColors(),
-                    trailingIcon = if (query.isNotEmpty()) {
-                        {
-                            Surface(
-                                onClick = { query = "" },
-                                shape = CircleShape,
-                                color = CardSurface,
+                // Drafted-style monospace counter bar: TOTAL · SYNCED · DRAFTS
+                if (visibleIdeas.isNotEmpty()) {
+                    val syncedCount = remember(visibleIdeas) { visibleIdeas.count { it.isPushed } }
+                    val draftCount = visibleIdeas.size - syncedCount
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = SoftWell,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
-                                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                                    PixelCloseIcon(tint = InkBlack, size = 9.dp)
-                                }
+                                Text(
+                                    text = "${visibleIdeas.size}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = InkBlack,
+                                )
+                                Text(
+                                    text = "IDEAS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedGray,
+                                )
+                            }
+                            Text("·", style = MaterialTheme.typography.labelMedium, color = MutedGray)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Text(
+                                    text = "$syncedCount",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = StatusGreen,
+                                )
+                                Text(
+                                    text = "SYNCED",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedGray,
+                                )
+                            }
+                            Text("·", style = MaterialTheme.typography.labelMedium, color = MutedGray)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Text(
+                                    text = "$draftCount",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = StatusAmber,
+                                )
+                                Text(
+                                    text = "DRAFTS",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MutedGray,
+                                )
                             }
                         }
-                    } else null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 6.dp),
-                )
+                    }
+                }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    filterOptions.forEach { option ->
-                        val active = option == selectedFilter
-                        Surface(
-                            onClick = { selectedFilter = option },
-                            shape = RoundedCornerShape(50),
-                            color = if (active) InkBlack else CardSurface,
-                        ) {
+                if (visibleIdeas.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("Search ideas, platforms, pillars…", color = MutedGray) },
+                        singleLine = true,
+                        shape = InnerTileShape,
+                        colors = softFieldColors(),
+                        trailingIcon = if (query.isNotEmpty()) {
+                            {
+                                Surface(
+                                    onClick = { query = "" },
+                                    shape = CircleShape,
+                                    color = CardSurface,
+                                ) {
+                                    Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                        PixelCloseIcon(tint = InkBlack, size = 9.dp)
+                                    }
+                                }
+                            }
+                        } else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        filterOptions.forEach { option ->
+                            val active = option == selectedFilter
+                            Surface(
+                                onClick = { selectedFilter = option },
+                                shape = RoundedCornerShape(50),
+                                color = if (active) InkBlack else CardSurface,
+                                border = if (active) null else BorderStroke(1.dp, SubtleDivider),
+                            ) {
+                                Text(
+                                    text = option,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (active) CardSurface else InkBlack,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (visibleIdeas.isEmpty()) {
+                    Box(Modifier.padding(24.dp)) {
+                        SoftCard(Modifier.fillMaxWidth()) {
+                            Text("No ideas yet", style = MaterialTheme.typography.titleMedium, color = InkBlack)
                             Text(
-                                text = option,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                color = if (active) CardSurface else InkBlack,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                "Hold Drafty on the home screen and speak your idea.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MutedGray,
+                                modifier = Modifier.padding(top = 6.dp),
                             )
                         }
                     }
+                } else if (filteredIdeas.isEmpty()) {
+                    Box(Modifier.padding(24.dp)) {
+                        SoftCard(Modifier.fillMaxWidth()) {
+                            Text("No matching ideas", style = MaterialTheme.typography.titleMedium, color = InkBlack)
+                            Text(
+                                "Try clearing your search or switching the filter chip.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MutedGray,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 72.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(filteredIdeas, key = { it.idea.id }) { card ->
+                            val dismissState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = { value ->
+                                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                                        val targetId = card.idea.id
+                                        haptics.onThresholdCross()
+                                        pendingDeleteIds = pendingDeleteIds + targetId
+                                        pendingDeleteJobs[targetId]?.cancel()
+                                        pendingDeleteJobs[targetId] = scope.launch {
+                                            delay(4100L)
+                                            pendingDeleteJobs.remove(targetId)
+                                            pendingDeleteIds = pendingDeleteIds - targetId
+                                            onDeleteIdea(targetId)
+                                        }
+                                        sheetToastState.show(
+                                            message = "Idea deleted",
+                                            actionLabel = "Undo",
+                                            onAction = {
+                                                pendingDeleteJobs.remove(targetId)?.cancel()
+                                                pendingDeleteIds = pendingDeleteIds - targetId
+                                                haptics.onPressDown()
+                                            },
+                                        )
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
+                            )
+
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                enableDismissFromStartToEnd = false,
+                                enableDismissFromEndToStart = true,
+                                backgroundContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CardShape)
+                                            .background(Color(0xFFFFEBEB))
+                                            .padding(horizontal = 22.dp),
+                                        contentAlignment = Alignment.CenterEnd,
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            Text(
+                                                text = "Delete",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFE53935),
+                                            )
+                                            PixelTrashIcon(tint = Color(0xFFE53935), size = 18.dp)
+                                        }
+                                    }
+                                },
+                            ) {
+                                IdeaFeedCard(card, onClick = { onOpenContainer(card.idea.id) })
+                            }
+                        }
+                    }
                 }
             }
 
-            if (ideas.isEmpty()) {
-                Box(Modifier.padding(24.dp)) {
-                    SoftCard(Modifier.fillMaxWidth()) {
-                        Text("No ideas yet", style = MaterialTheme.typography.titleMedium, color = InkBlack)
-                        Text(
-                            "Hold Drafty on the home screen and speak your idea.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MutedGray,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    }
-                }
-            } else if (filteredIdeas.isEmpty()) {
-                Box(Modifier.padding(24.dp)) {
-                    SoftCard(Modifier.fillMaxWidth()) {
-                        Text("No matching ideas", style = MaterialTheme.typography.titleMedium, color = InkBlack)
-                        Text(
-                            "Try clearing your search or switching the filter chip.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MutedGray,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(filteredIdeas, key = { it.idea.id }) { card ->
-                        IdeaFeedCard(card, onClick = { onOpenContainer(card.idea.id) })
-                    }
-                }
-            }
+            GlassToastHost(
+                state = sheetToastState,
+                bottomPadding = 16.dp,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }
@@ -1055,14 +1384,22 @@ private fun RecentIdeasSheet(
 @Composable
 private fun CreatorProfileSheet(
     profile: UserProfileState,
+    authSession: AuthSession?,
+    authConfigured: Boolean,
     onDismiss: () -> Unit,
+    onSignInWithEmail: (email: String, password: String, onDone: () -> Unit) -> Unit,
+    onSignUpWithEmail: (email: String, password: String, brandName: String, brandVoice: String, onDone: () -> Unit) -> Unit,
+    onContinueWithGoogle: () -> Unit,
+    onSignOut: () -> Unit,
     onSave: (email: String, brandName: String, brandVoice: String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var email by remember(profile) { mutableStateOf(profile.email) }
+    var email by remember(profile, authSession) { mutableStateOf(authSession?.email?.ifBlank { null } ?: profile.email) }
+    var password by remember { mutableStateOf("") }
+    var isSignUpMode by remember { mutableStateOf(false) }
     var brandName by remember(profile) { mutableStateOf(profile.brandName) }
     var brandVoice by remember(profile) { mutableStateOf(profile.brandVoicePrompt) }
-    var saving by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1074,63 +1411,197 @@ private fun CreatorProfileSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                "Creator Profile",
-                style = MaterialTheme.typography.headlineSmall,
-                color = InkBlack,
-            )
-            Text(
-                "Saves your creator metadata for this device and tailors AI drafts to your brand voice.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedGray,
-            )
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Email address") },
-                placeholder = { Text("creator@drafty.app") },
-                singleLine = true,
-                shape = InnerTileShape,
-                modifier = Modifier.fillMaxWidth(),
-                colors = softFieldColors(),
-            )
-            OutlinedTextField(
-                value = brandName,
-                onValueChange = { brandName = it },
-                label = { Text("Brand / Creator Name") },
-                placeholder = { Text("e.g. Alex Creates") },
-                singleLine = true,
-                shape = InnerTileShape,
-                modifier = Modifier.fillMaxWidth(),
-                colors = softFieldColors(),
-            )
-            OutlinedTextField(
-                value = brandVoice,
-                onValueChange = { brandVoice = it },
-                label = { Text("Brand Voice Prompt (optional)") },
-                placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
-                minLines = 2,
-                shape = InnerTileShape,
-                modifier = Modifier.fillMaxWidth(),
-                colors = softFieldColors(),
-            )
-            GlassButton(
-                text = if (saving) "Saving Profile…" else "Save Profile",
-                dark = true,
-                enabled = !saving && email.isNotBlank() && brandName.isNotBlank(),
-                onClick = {
-                    saving = true
-                    onSave(email, brandName, brandVoice)
-                },
-                leadingIcon = if (!saving) {
-                    { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
-                } else null,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp).fillMaxWidth(),
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (authSession != null) "Drafted Account" else "Sign In · Drafty & Drafted",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = InkBlack,
+                )
+                if (authSession != null) {
+                    SoftChip(
+                        text = "Connected",
+                        fillColor = Color(0xFFEAF7EE),
+                        textColor = Color(0xFF157A42),
+                        dotColor = StatusGreen,
+                    )
+                }
+            }
+
+            if (authSession == null) {
+                Text(
+                    "Use one account across Drafty and Drafted so your scheduled drafts sync automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedGray,
+                )
+
+                // Segmented Sign In / Create Account toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(50))
+                        .background(SoftWell)
+                        .padding(4.dp),
+                ) {
+                    listOf(false to "Sign In", true to "Create Account").forEach { (signUp, label) ->
+                        val active = isSignUpMode == signUp
+                        Surface(
+                            onClick = { isSignUpMode = signUp },
+                            shape = RoundedCornerShape(50),
+                            color = if (active) InkBlack else Color.Transparent,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (active) CardSurface else MutedGray,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                GlassButton(
+                    text = "Continue with Google",
+                    dark = false,
+                    enabled = !busy,
+                    onClick = onContinueWithGoogle,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email address") },
+                    placeholder = { Text("creator@drafty.app") },
+                    singleLine = true,
+                    shape = InnerTileShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = softFieldColors(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    placeholder = { Text("At least 6 characters") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    shape = InnerTileShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = softFieldColors(),
+                )
+                if (isSignUpMode) {
+                    OutlinedTextField(
+                        value = brandName,
+                        onValueChange = { brandName = it },
+                        label = { Text("Brand / Creator Name") },
+                        placeholder = { Text("e.g. Alex Creates") },
+                        singleLine = true,
+                        shape = InnerTileShape,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = softFieldColors(),
+                    )
+                    OutlinedTextField(
+                        value = brandVoice,
+                        onValueChange = { brandVoice = it },
+                        label = { Text("Brand Voice (optional)") },
+                        placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
+                        minLines = 2,
+                        shape = InnerTileShape,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = softFieldColors(),
+                    )
+                }
+
+                GlassButton(
+                    text = when {
+                        busy -> "Please wait…"
+                        isSignUpMode -> "Create Unified Account"
+                        else -> "Sign In"
+                    },
+                    dark = true,
+                    enabled = !busy && email.isNotBlank() && password.length >= 6 && (!isSignUpMode || brandName.isNotBlank()),
+                    onClick = {
+                        busy = true
+                        if (isSignUpMode) {
+                            onSignUpWithEmail(email, password, brandName, brandVoice) { busy = false }
+                        } else {
+                            onSignInWithEmail(email, password) { busy = false }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                if (!authConfigured) {
+                    Text(
+                        text = "Tip: Add DRAFTY_SUPABASE_URL and DRAFTY_SUPABASE_ANON_KEY to android/local.properties to enable Supabase Auth.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedGray,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Text(
+                    "Signed in as ${authSession.email}. Your scheduled ideas sync directly to Drafted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedGray,
+                )
+                OutlinedTextField(
+                    value = brandName,
+                    onValueChange = { brandName = it },
+                    label = { Text("Brand / Creator Name") },
+                    placeholder = { Text("e.g. Alex Creates") },
+                    singleLine = true,
+                    shape = InnerTileShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = softFieldColors(),
+                )
+                OutlinedTextField(
+                    value = brandVoice,
+                    onValueChange = { brandVoice = it },
+                    label = { Text("Brand Voice Prompt (optional)") },
+                    placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
+                    minLines = 2,
+                    shape = InnerTileShape,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = softFieldColors(),
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    GlassButton(
+                        text = "Sign Out",
+                        dark = false,
+                        onClick = onSignOut,
+                        modifier = Modifier.weight(0.42f),
+                    )
+                    GlassButton(
+                        text = if (busy) "Saving…" else "Save Profile",
+                        dark = true,
+                        enabled = !busy && brandName.isNotBlank(),
+                        onClick = {
+                            busy = true
+                            onSave(authSession.email.ifBlank { email }, brandName, brandVoice)
+                        },
+                        leadingIcon = if (!busy) {
+                            { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
+                        } else null,
+                        modifier = Modifier.weight(0.58f),
+                    )
+                }
+            }
         }
     }
 }
@@ -1138,27 +1609,17 @@ private fun CreatorProfileSheet(
 @Composable
 private fun IdeaFeedCard(card: IdeaCard, onClick: () -> Unit) {
     val idea = card.idea
+    val platforms = remember(idea.metadata.targetPlatforms) {
+        idea.metadata.targetPlatforms.map(::canonicalPlatform).distinct().take(3)
+    }
+    val previewHook = remember(idea.assets.hookOptions, idea.summary) {
+        idea.assets.hookOptions.firstOrNull()?.takeIf { it.isNotBlank() }
+    }
+
     SoftCard(Modifier.fillMaxWidth(), color = CardSurface, onClick = onClick) {
-        Text(
-            idea.title,
-            style = MaterialTheme.typography.titleLarge,
-            color = InkBlack,
-            maxLines = 2,
-        )
-        Text(
-            idea.summary,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MutedGray,
-            maxLines = 2,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        val platforms = remember(idea.metadata.targetPlatforms) {
-            idea.metadata.targetPlatforms.map(::canonicalPlatform).distinct().take(4)
-        }
+        // Drafted-style top metadata row: status + platforms on left, monospace slot on right
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
+            Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1166,20 +1627,76 @@ private fun IdeaFeedCard(card: IdeaCard, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SoftChip(text = formatDate(idea.schedule.recommendedDate), fillColor = SoftWell)
                 if (card.isPushed) {
-                    SoftChip(text = "Synced", fillColor = SoftWell, dotColor = StatusGreen)
+                    SoftChip(
+                        text = "Synced",
+                        fillColor = Color(0xFFEAF7EE),
+                        textColor = Color(0xFF157A42),
+                        dotColor = StatusGreen,
+                    )
+                } else {
+                    SoftChip(
+                        text = "Draft",
+                        fillColor = SoftWell,
+                        textColor = MutedGray,
+                        dotColor = InkBlack,
+                    )
                 }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
                 platforms.forEach { platform ->
-                    PlatformLogoBadge(platform = platform, size = 22.dp)
+                    PlatformLogoBadge(platform = platform, size = 20.dp)
                 }
             }
+            Text(
+                text = if (card.isPushed) {
+                    formatDate(idea.schedule.recommendedDate)
+                } else {
+                    formatRelativeCreatedDate(card.createdAt)
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MutedGray,
+            )
         }
+
+        // Editorial bold title
+        Text(
+            idea.title,
+            style = MaterialTheme.typography.titleLarge,
+            color = InkBlack,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+
+        // Drafted-style SoftWell preview box ("Hook: ...")
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+                .clip(InnerTileShape)
+                .background(SoftWell)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = if (previewHook != null) "Hook: \"$previewHook\"" else idea.summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedGray,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun formatRelativeCreatedDate(epochMillis: Long): String {
+    if (epochMillis <= 0L) return "Today"
+    val now = java.util.Calendar.getInstance()
+    val created = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
+    val sameYear = now.get(java.util.Calendar.YEAR) == created.get(java.util.Calendar.YEAR)
+    val dayDiff = now.get(java.util.Calendar.DAY_OF_YEAR) - created.get(java.util.Calendar.DAY_OF_YEAR)
+    return when {
+        sameYear && dayDiff == 0 -> "Today"
+        sameYear && dayDiff == 1 -> "Yesterday"
+        else -> java.text.SimpleDateFormat("MMM d", java.util.Locale.US).format(java.util.Date(epochMillis))
     }
 }
 

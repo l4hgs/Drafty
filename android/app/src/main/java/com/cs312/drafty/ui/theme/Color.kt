@@ -2,18 +2,19 @@ package com.cs312.drafty.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Apple-inspired borderless soft UI surfaces
-val AppBackground = Color(0xFFF7F7F9)
+// Drafted-aligned editorial light surfaces & crisp jet-black contrast
+val AppBackground = Color(0xFFFAFAFC)
 val CardSurface = Color(0xFFFFFFFF)
-val SoftWell = Color(0xFFF0F0F3)
-val InkBlack = Color(0xFF111111)
-val MutedGray = Color(0xFF6E6E73)
-val SubtleDivider = Color(0xFFE5E5EA)
+val SoftWell = Color(0xFFF4F4F6)
+val InkBlack = Color(0xFF0E0E10)
+val MutedGray = Color(0xFF71717A)
+val SubtleDivider = Color(0xFFECECF0)
 
 // Soft ambient shadow tints
-val ShadowAmbient = Color(0x0D000000)
-val ShadowSpot = Color(0x14000000)
+val ShadowAmbient = Color(0x0A000000)
+val ShadowSpot = Color(0x12000000)
 
-// Minimal semantic status dots
-val StatusGreen = Color(0xFF34C759)
-val StatusRed = Color(0xFFFF3B30)
+// Drafted semantic status accents
+val StatusGreen = Color(0xFF18A957)
+val StatusAmber = Color(0xFFD96B27)
+val StatusRed = Color(0xFFE53935)
