@@ -8,7 +8,7 @@
 _Voice-driven AI content structuring assistant for creators — seamlessly synced with [{ Drafted }](https://github.com/l4hgs/Drafted)._
 
 <p>
-  <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v2.0-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
+  <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.1.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v2.0.1-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
   <a href="https://drafty-vh1d.onrender.com/health"><img src="https://img.shields.io/badge/API-Live_on_Render-059669?style=flat-square&logo=render&logoColor=white" alt="Live API" /></a>
   <a href="https://github.com/l4hgs/Drafted"><img src="https://img.shields.io/badge/Companion-Drafted_Calendar-111111?style=flat-square&logo=flutter&logoColor=white" alt="Drafted Companion Repo" /></a>
   <img src="https://img.shields.io/badge/Android-Kotlin_&_Compose-111111?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
@@ -23,9 +23,9 @@ _Voice-driven AI content structuring assistant for creators — seamlessly synce
 
 ## `[ 00 ]` Download & Live API
 
-- **Android App (APK):** [**Download `Drafty-v2.0.apk`**](https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.apk) _(or browse [All Releases](https://github.com/l4hgs/Drafty/releases/latest))_
+- **Android App (APK):** [**Download `Drafty-v2.0.1.apk`**](https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.1.apk) _(or browse [All Releases](https://github.com/l4hgs/Drafty/releases/latest))_
   1. Tap the download link on your Android phone (Android 7.0+ / API 24+).
-  2. Open `Drafty-v2.0.apk` and allow **Install unknown apps** for your browser if prompted.
+  2. Open `Drafty-v2.0.1.apk` and allow **Install unknown apps** for your browser if prompted.
   3. Complete the 5-step onboarding (sign in with **Google** or **Email + Password**, personalize your creator voice, grant Microphone permission), and hold Drafty to start drafting!
 - **Companion Calendar App:** [**`l4hgs/Drafted`**](https://github.com/l4hgs/Drafted) — sign in with the exact same account to manage your scheduled posts on a full editorial calendar, production checklists, and publish bridge.
 - **Live Cloud API:** `https://drafty-vh1d.onrender.com/`
@@ -53,6 +53,16 @@ Drafty is a custom `24×24` 1-bit monochrome pixel companion rendered with neare
 ---
 
 ## `[ 02 ]` Core Features
+
+<div align="center">
+
+| Home & Hold-to-Talk Dock | Listening & RGB Edge Wave | Idea Container (`Script` · `Creatives` · `Schedule`) |
+| :---: | :---: | :---: |
+| <img src="docs/assets/screens/01_home.jpg" alt="Home Screen" width="220" /> | <img src="docs/assets/screens/02_listening.jpg" alt="Listening Screen" width="220" /> | <img src="docs/assets/screens/03_idea_container.jpg" alt="Idea Container" width="220" /> |
+| **Scheduled to Drafted!** | **Synced in Drafted Calendar** | **Offline Queue (Room Auto-Sync)** |
+| <img src="docs/assets/screens/04_scheduled_modal.jpg" alt="Scheduled to Drafted Modal" width="220" /> | <img src="docs/assets/screens/05_drafted_calendar.png" alt="Drafted Calendar Sync" width="220" /> | <img src="docs/assets/screens/06_offline_queue.png" alt="Offline Queue Sheet" width="220" /> |
+
+</div>
 
 - **Voice-First Push-to-Talk & Hands-Free Lock:** Press and hold Drafty on the notched liquid-glass dock to record; **slide left or right to engage Hands-Free Lock** for longer brain-dumps; slide up to cancel; release or tap **Stop & Draft** to process — backed by tactile `HapticChoreographer` cues and `GlassToast` feedback.
 - **Swipeable Idea Container (`Script` · `Creatives` · `Schedule`):** Foundation `HorizontalPager` with a Drafted-style jet-black segmented control, **tap-to-select Primary Hook** (automatically placed first when copying, sharing, or syncing to Drafted), unified inline **Edit / Cancel** (including shot-list editing), and a responsive **two-pane landscape layout**.
@@ -94,7 +104,7 @@ flowchart LR
     subgraph Cloud ["FastAPI Backend on Render & OpenAI"]
         Net -->|POST /api/v1/voice/transcribe-and-parse| API["FastAPI Gateway\n(JWT Verify + Rate Limit + Security Headers)"]
         API -->|Non-Blocking Upload| Bucket[("Supabase Storage: voice-drafts")]
-        API -->|Speech-to-Text| Whisper["OpenAI Whisper (whisper-1)"]
+        API -->|Speech-to-Text| Whisper["OpenAI ASR\n(gpt-4o-mini-transcribe / whisper-1)"]
         Whisper -->|Parallel Moderation + Parse| LLM["omni-moderation-latest +\nGPT-4o mini (Strict Pydantic)"]
         LLM -->|Persists Draft & Container| DB[("Shared Supabase PostgreSQL\n+ Auth + Strict RLS")]
     end
@@ -121,7 +131,7 @@ flowchart LR
 | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Mobile App (`android/`)**  | Kotlin, Jetpack Compose (Material 3), Foundation `HorizontalPager`, Navigation Compose, ViewModel + StateFlow, Room (KSP), Retrofit 2 + OkHttp 3, Moshi (KSP), AndroidKeyStore AES-GCM, `MediaRecorder` (AAC `.m4a`), `ConnectivityManager` |
 | **Backend API (`backend/`)** | Python 3.12, FastAPI, Uvicorn, Pydantic v2 (`extra="forbid"`), `python-multipart`, `python-dotenv`                                                                                                                                          |
-| **AI & Safety Pipeline**     | OpenAI Whisper (`whisper-1`), OpenAI Moderation (`omni-moderation-latest`), OpenAI `gpt-4o-mini` Structured Outputs                                                                                                                         |
+| **AI & Safety Pipeline**     | OpenAI `gpt-4o-mini-transcribe` (`whisper-1` fallback), OpenAI Moderation (`omni-moderation-latest`), OpenAI `gpt-4o-mini` Structured Outputs                                                                                             |
 | **Database, Auth & Storage** | Shared Supabase Project (`auth.users`, `user_profiles`, `voice_drafts`, `content_containers`, Drafted `posts` / `subtasks` / `radar_events` / `checklist_presets` / `milestone_stickers`) + Supabase Storage (`voice-drafts`)               |
 | **Companion App**            | [{ Drafted }](https://github.com/l4hgs/Drafted) (Flutter + Riverpod + `supabase_flutter`)                                                                                                                                                   |
 | **Deployment**               | `render.yaml` Blueprint + `backend/Dockerfile` + Gradle `local.properties` / `-PDRAFTY_API_URL` build injection                                                                                                                             |
@@ -160,7 +170,9 @@ Drafty/
 │   ├── models.py                        # Strict Pydantic v2 schemas
 │   └── requirements.txt
 ├── docs/                                # Documentation, Benchmarks & Mascot Assets
-│   ├── assets/mascot/                   # Crisp pixel PNGs & 512x512 animated GIFs
+│   ├── assets/
+│   │   ├── mascot/                      # Crisp pixel PNGs & 512x512 animated GIFs
+│   │   └── screens/                     # App screenshots for README showcase
 │   ├── UI_Design_System.md
 │   ├── BRD.md
 │   ├── Evaluation_Report.md
@@ -232,7 +244,7 @@ cd android
 ## `[ 09 ]` Tests & Documentation
 
 ```powershell
-# Backend unit test suite (16 tests)
+# Backend unit test suite (20 tests)
 python -m unittest discover -s backend/tests -p "test_*.py" -v
 
 # Android Kotlin compilation check
