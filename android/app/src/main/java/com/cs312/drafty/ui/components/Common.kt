@@ -1,14 +1,28 @@
 package com.cs312.drafty.ui.components
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -17,8 +31,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -30,9 +51,17 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import com.cs312.drafty.ui.theme.CardShape
 import com.cs312.drafty.ui.theme.CardSurface
 import com.cs312.drafty.ui.theme.InkBlack
@@ -42,32 +71,33 @@ import com.cs312.drafty.ui.theme.ShadowAmbient
 import com.cs312.drafty.ui.theme.ShadowSpot
 import com.cs312.drafty.ui.theme.SoftWell
 import com.cs312.drafty.ui.theme.StatusRed
+import com.cs312.drafty.ui.theme.SubtleDivider
 import kotlin.math.floor
 
-private val LightGlassBrush = Brush.linearGradient(
+private val LightGlassBrush = Brush.verticalGradient(
     colors = listOf(
-        Color(0xF0FFFFFF), // luminous top-left specular shine (~94%)
-        Color(0xCCFFFFFF), // rich frosted glass center (~80%) — blends ambient tint while staying crisp over text
-        Color(0xE0FFFFFF), // soft bottom-right internal light bounce (~88%)
+        Color(0xF7FFFFFF),
+        Color(0xF0F7F7F9),
     ),
 )
 private val LightGlassBorderBrush = Brush.linearGradient(
     colors = listOf(
-        Color(0xFFFFFFFF),
-        Color(0xAAFFFFFF),
-        Color(0xD9FFFFFF),
+        Color(0xFFE8E8EE),
+        Color(0xFFF2F2F6),
+        Color(0xFFE4E4EA),
     ),
 )
-private val DarkGlassBrush = Brush.linearGradient(
-    colors = listOf(Color(0xEB222224), Color(0xD9111111)),
+private val DarkGlassBrush = Brush.verticalGradient(
+    colors = listOf(Color(0xFF141416), InkBlack),
 )
 private val DestructiveGlassBrush = Brush.verticalGradient(
     listOf(StatusRed, Color(0xFFD92D20)),
 )
-private val GlassSpotShadow = Color(0x1C000000)
+private val GlassSpotShadow = Color(0x14000000)
 
 /**
- * Apple-inspired borderless pure-white card with soft ambient elevation shadow.
+ * Drafted-aligned pure-white editorial card with crisp 1.dp hairline border
+ * and whisper-soft ambient elevation shadow.
  */
 @Composable
 fun SoftCard(
@@ -77,11 +107,12 @@ fun SoftCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val cardMod = modifier.shadow(
-        elevation = 6.dp,
+        elevation = 4.dp,
         shape = CardShape,
         ambientColor = ShadowAmbient,
         spotColor = ShadowSpot,
     )
+    val cardBorder = BorderStroke(1.dp, SubtleDivider)
     val body: @Composable () -> Unit = { Column(Modifier.padding(20.dp), content = content) }
     if (onClick != null) {
         Surface(
@@ -89,7 +120,7 @@ fun SoftCard(
             modifier = cardMod,
             shape = CardShape,
             color = color,
-            border = null,
+            border = cardBorder,
             shadowElevation = 0.dp,
             tonalElevation = 0.dp,
         ) { body() }
@@ -98,7 +129,7 @@ fun SoftCard(
             modifier = cardMod,
             shape = CardShape,
             color = color,
-            border = null,
+            border = cardBorder,
             shadowElevation = 0.dp,
             tonalElevation = 0.dp,
         ) { body() }
@@ -106,7 +137,7 @@ fun SoftCard(
 }
 
 /**
- * Borderless SoftWell pill chip with optional semantic status dot.
+ * Drafted-style pill chip with optional semantic status dot and monospace metadata label.
  */
 @Composable
 fun SoftChip(
@@ -561,6 +592,228 @@ fun PixelSparkleIcon(tint: Color = InkBlack, size: Dp = 14.dp, modifier: Modifie
         size = size,
         modifier = modifier,
     )
+}
+
+@Composable
+fun PixelLockIcon(tint: Color = InkBlack, size: Dp = 14.dp, modifier: Modifier = Modifier) {
+    PixelIconGrid(
+        pattern = listOf(
+            "..#####..",
+            ".##...##.",
+            ".#.....#.",
+            ".#.....#.",
+            "#########",
+            "###...###",
+            "###.#.###",
+            "#########",
+            ".#######.",
+        ),
+        tint = tint,
+        size = size,
+        modifier = modifier,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 Shared Micro-Primitives: GlassToast, HapticChoreographer, springPressScale
+// ---------------------------------------------------------------------------
+
+data class GlassToastData(
+    val id: Long = System.nanoTime(),
+    val message: String,
+    val actionLabel: String? = null,
+    val onAction: (() -> Unit)? = null,
+    val leadingIcon: (@Composable () -> Unit)? = null,
+)
+
+@Stable
+class GlassToastState {
+    var current by mutableStateOf<GlassToastData?>(null)
+        private set
+
+    fun show(
+        message: String,
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null,
+        leadingIcon: (@Composable () -> Unit)? = null,
+    ) {
+        current = GlassToastData(
+            message = message,
+            actionLabel = actionLabel,
+            onAction = onAction,
+            leadingIcon = leadingIcon,
+        )
+    }
+
+    fun dismiss() {
+        current = null
+    }
+}
+
+@Composable
+fun rememberGlassToastState(): GlassToastState = remember { GlassToastState() }
+
+/**
+ * Floating frosted liquid-glass pill toast anchored above bottom docks.
+ * Auto-dismisses after 2400ms (or 4000ms when an inline action label is present).
+ */
+@Composable
+fun GlassToastHost(
+    state: GlassToastState,
+    modifier: Modifier = Modifier,
+    bottomPadding: Dp = 112.dp,
+) {
+    val toast = state.current
+    LaunchedEffect(toast?.id) {
+        if (toast != null) {
+            delay(if (toast.actionLabel != null) 4000L else 2400L)
+            if (state.current?.id == toast.id) {
+                state.dismiss()
+            }
+        }
+    }
+
+    val pillShape = RoundedCornerShape(50)
+    val toastBrush = Brush.verticalGradient(listOf(Color(0xF2FFFFFF), Color(0xCCFFFFFF)))
+
+    Box(
+        modifier = modifier
+            .navigationBarsPadding()
+            .padding(bottom = bottomPadding, start = 24.dp, end = 24.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        AnimatedVisibility(
+            visible = toast != null,
+            enter = fadeIn() + slideInVertically { it / 2 },
+            exit = fadeOut() + slideOutVertically { it / 2 },
+        ) {
+            toast?.let { data ->
+                Surface(
+                    shape = pillShape,
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, Color.White),
+                    shadowElevation = 0.dp,
+                    modifier = Modifier.shadow(
+                        elevation = 10.dp,
+                        shape = pillShape,
+                        ambientColor = ShadowAmbient,
+                        spotColor = Color(0x1E000000),
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(pillShape)
+                            .background(toastBrush)
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        data.leadingIcon?.invoke()
+                        Text(
+                            text = data.message,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            color = InkBlack,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (data.actionLabel != null && data.onAction != null) {
+                            Text(
+                                text = data.actionLabel,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                ),
+                                color = InkBlack,
+                                modifier = Modifier
+                                    .clip(pillShape)
+                                    .background(SoftWell)
+                                    .clickable {
+                                        val action = data.onAction
+                                        state.dismiss()
+                                        action.invoke()
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Semantic haptic choreographer mapping Drafty gestures to distinct tactile cues.
+ */
+@Stable
+class HapticChoreographer(
+    private val view: android.view.View,
+    private val composeHaptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
+) {
+    fun onPressDown() {
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    fun onThresholdCross() {
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+
+    fun onLockEngaged() {
+        composeHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
+    }
+
+    fun onReleaseDraft() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        } else {
+            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+    }
+
+    fun onSuccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        } else {
+            composeHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+}
+
+@Composable
+fun rememberHapticChoreographer(): HapticChoreographer {
+    val view = LocalView.current
+    val haptics = LocalHapticFeedback.current
+    return remember(view, haptics) { HapticChoreographer(view, haptics) }
+}
+
+/**
+ * Reusable spring compression modifier on pointer down (default 0.94x) without
+ * consuming downstream click or drag gestures.
+ */
+fun Modifier.springPressScale(pressedScale: Float = 0.94f): Modifier = composed {
+    var pressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) pressedScale else 1f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f),
+        label = "springPressScale",
+    )
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                pressed = true
+                waitForUpOrCancellation()
+                pressed = false
+            }
+        }
 }
 
 // ---------------------------------------------------------------------------

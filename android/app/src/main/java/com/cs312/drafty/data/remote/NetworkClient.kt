@@ -2,6 +2,7 @@ package com.cs312.drafty.data.remote
 
 import android.util.Log
 import com.cs312.drafty.BuildConfig
+import com.cs312.drafty.core.auth.SupabaseAuthManager
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
@@ -46,12 +47,25 @@ object NetworkClient {
         }
     }
 
+    private val authInterceptor = Interceptor { chain ->
+        val token = SupabaseAuthManager.activeAccessToken
+        val req = if (!token.isNullOrBlank()) {
+            chain.request().newBuilder()
+                .header("Authorization", "Bearer $token")
+                .build()
+        } else {
+            chain.request()
+        }
+        chain.proceed(req)
+    }
+
     private val okHttp: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(45, TimeUnit.SECONDS)
-            .readTimeout(45, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            .addInterceptor(authInterceptor)
             .addInterceptor(hostFallbackInterceptor)
             .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
             .build()

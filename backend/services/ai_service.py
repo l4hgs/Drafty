@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from openai import AsyncOpenAI, OpenAIError
 
@@ -143,7 +143,36 @@ class AIService:
             raise ContentSafetyError(SAFETY_BLOCK_MESSAGE)
         if message.parsed is None:
             raise ParsingError("Model returned no parsed content.")
-        return message.parsed
+        return self._normalize_schedule(message.parsed, client_time.date(), booked_dates)
+
+    @staticmethod
+    def _normalize_schedule(
+        parsed: ParsedContent,
+        reference_date: date,
+        booked_dates: list[str] | None = None,
+    ) -> ParsedContent:
+        """Ensure recommended_date is a valid upcoming date and recommended_day matches its true weekday."""
+        booked = set(booked_dates or [])
+        chosen: date | None = None
+        try:
+            candidate = date.fromisoformat(parsed.schedule.recommended_date.strip())
+            if reference_date < candidate <= reference_date + timedelta(days=14):
+                chosen = candidate
+        except ValueError:
+            chosen = None
+
+        if chosen is None:
+            for offset in range(1, 15):
+                d = reference_date + timedelta(days=offset)
+                if d.isoformat() not in booked:
+                    chosen = d
+                    break
+            if chosen is None:
+                chosen = reference_date + timedelta(days=1)
+
+        parsed.schedule.recommended_date = chosen.isoformat()
+        parsed.schedule.recommended_day = chosen.strftime("%A")
+        return parsed
 
     async def regenerate_hooks(self, req: RegenerateHooksRequest) -> list[str]:
         await self.check_safety(f"{req.brand_voice}\n{req.title}\n{req.summary}\n{req.primary_caption[:600]}")

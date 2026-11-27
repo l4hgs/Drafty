@@ -5,7 +5,7 @@
 # `{ Drafty }`
 
 **Talk it out. I'll draft it.**  
-*Voice-driven AI content structuring assistant for short-form creators — blending Apple Liquid Glass with crisp 1-bit pixel craft.*
+*Voice-driven AI content structuring assistant for creators.*
 
 <p>
   <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v1.0.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v1.0-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
@@ -40,12 +40,12 @@ Drafty is a custom `24×24` 1-bit monochrome pixel companion rendered with neare
 
 | `IDLE · READY` | `LISTENING · HOLD TO TALK` | `THINKING · STRUCTURING` |
 | :---: | :---: | :---: |
-| <img src="docs/assets/mascot/drafty_idle_white_bg.png" alt="Drafty Idle" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_listening_white_bg.png" alt="Drafty Listening" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_thinking_white_bg.png" alt="Drafty Thinking" width="96" height="96" /> |
+| <img src="docs/assets/mascot/drafty_idle.gif" alt="Drafty Idle" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_listening.gif" alt="Drafty Listening" width="96" height="96" /> | <img src="docs/assets/mascot/drafty_thinking.gif" alt="Drafty Thinking" width="96" height="96" /> |
 | Gentle hover & periodic blink on the Home dock, ready to capture your next idea. | Press & hold Drafty to record with a voice-reactive RGB liquid-glass edge wave & live waveform. | Whisper transcribes your memo while GPT-4o mini structures hooks, script, shots & schedule. |
 
 </div>
 
-> Once saved or synced to **Drafted**, Drafty switches to `CELEBRATING` (<img src="docs/assets/mascot/drafty_celebrating_white_bg.png" alt="Drafty Celebrating" width="22" height="22" align="absmiddle" />) with a crisp pixel sparkle and checkmark.
+> Once saved or synced to **Drafted**, Drafty switches to `CELEBRATING` (<img src="docs/assets/mascot/drafty_celebrating.gif" alt="Drafty Celebrating" width="24" height="24" align="absmiddle" />) with a crisp pixel sparkle and checkmark.
 
 ---
 
@@ -181,6 +181,7 @@ python -m unittest discover -s backend/tests -p "test_*.py" -v
 cd android && .\gradlew.bat :app:compileDebugKotlin --console=plain
 ```
 
+- **[UI Design System & Interface Guide](docs/UI_Design_System.md)**
 - **[Business Requirements Document](docs/BRD.md)**
 - **[Sprint Implementation Plan](docs/Implementation.md)**
 - **[Progress Tracker](docs/Progress.md)**

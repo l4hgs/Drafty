@@ -66,6 +66,7 @@ class DraftedSyncRequest(BaseModel):
     title: str | None = None
     assets: ContentAssets | None = None
     schedule: Schedule | None = None
+    selected_hook_index: int = 0
 
 
 class ContainerUpdateRequest(BaseModel):
@@ -86,6 +87,7 @@ class DraftedSyncResponse(BaseModel):
     container_id: UUID
     scheduled_for: str | None = Field(description="ISO local datetime, e.g. 2026-11-06T18:00")
     sync_status: str
+    drafted_post_id: str | None = None
 
 
 class AudioUploadResponse(BaseModel):

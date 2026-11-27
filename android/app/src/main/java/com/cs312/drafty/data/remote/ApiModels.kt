@@ -56,6 +56,7 @@ data class DraftedSyncRequest(
     val title: String? = null,
     val assets: Assets? = null,
     val schedule: ScheduleInfo? = null,
+    @param:Json(name = "selected_hook_index") val selectedHookIndex: Int = 0,
 )
 
 @JsonClass(generateAdapter = true)
@@ -78,6 +79,7 @@ data class DraftedSyncResponse(
     @param:Json(name = "container_id") val containerId: String,
     @param:Json(name = "scheduled_for") val scheduledFor: String?,
     @param:Json(name = "sync_status") val syncStatus: String,
+    @param:Json(name = "drafted_post_id") val draftedPostId: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

@@ -2,11 +2,14 @@ package com.cs312.drafty.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.cs312.drafty.core.audio.AudioRecorder
+import com.cs312.drafty.core.auth.AuthSession
+import com.cs312.drafty.core.auth.SupabaseAuthManager
 import com.cs312.drafty.core.network.OfflineQueueManager
 import com.cs312.drafty.data.local.DraftyDatabase
 import com.cs312.drafty.data.local.PendingVoiceNoteEntity
@@ -78,19 +81,129 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
     private val recorder = AudioRecorder(app)
     private val offlineQueue = OfflineQueueManager(app, dao, api, viewModelScope)
     private val prefs = app.getSharedPreferences("drafty", Context.MODE_PRIVATE)
+    val authManager = SupabaseAuthManager(app)
+    val authSession: StateFlow<AuthSession?> = authManager.session
+    val isSupabaseAuthConfigured: Boolean get() = authManager.isConfigured
 
     private val _userProfile = MutableStateFlow(
         UserProfileState(
-            userId = prefs.getString("user_id", null)
+            userId = authManager.session.value?.userId
+                ?: prefs.getString("user_id", null)
                 ?: UUID.randomUUID().toString().also { prefs.edit().putString("user_id", it).apply() },
-            email = prefs.getString("user_email", "") ?: "",
-            brandName = prefs.getString("brand_name", "") ?: "",
+            email = authManager.session.value?.email?.ifBlank { null }
+                ?: prefs.getString("user_email", "") ?: "",
+            brandName = authManager.session.value?.displayName?.ifBlank { null }
+                ?: prefs.getString("brand_name", "") ?: "",
             brandVoicePrompt = prefs.getString("brand_voice_prompt", "") ?: "",
         ),
     )
     val userProfile: StateFlow<UserProfileState> = _userProfile.asStateFlow()
 
-    val userId: String get() = _userProfile.value.userId
+    val userId: String get() = authManager.session.value?.userId ?: _userProfile.value.userId
+
+    init {
+        viewModelScope.launch {
+            authManager.refreshSessionIfNeeded()
+        }
+    }
+
+    fun signInWithEmail(
+        email: String,
+        password: String,
+        onComplete: (Result<AuthSession>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val res = authManager.signInWithEmail(email, password)
+            res.onSuccess { session -> applyAuthSession(session) }
+            onComplete(res)
+        }
+    }
+
+    fun signUpWithEmail(
+        email: String,
+        password: String,
+        brandName: String,
+        brandVoice: String = "",
+        onComplete: (Result<AuthSession>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val res = authManager.signUpWithEmail(email, password, brandName, brandVoice)
+            res.onSuccess { session ->
+                applyAuthSession(session, brandNameOverride = brandName, brandVoiceOverride = brandVoice)
+                saveUserProfile(session.email, brandName.ifBlank { session.displayName }, brandVoice) {}
+            }
+            onComplete(res)
+        }
+    }
+
+    fun handleOAuthCallback(uri: Uri, onComplete: (Result<AuthSession>) -> Unit = {}) {
+        viewModelScope.launch {
+            val res = authManager.handleOAuthCallback(uri)
+            res.onSuccess { session ->
+                applyAuthSession(session)
+                saveUserProfile(
+                    email = session.email,
+                    brandName = session.displayName.ifBlank { session.email.substringBefore("@") },
+                    brandVoicePrompt = _userProfile.value.brandVoicePrompt,
+                ) {}
+            }
+            onComplete(res)
+        }
+    }
+
+    fun signOut() {
+        authManager.signOut()
+        val guestId = UUID.randomUUID().toString()
+        prefs.edit()
+            .putString("user_id", guestId)
+            .remove("user_email")
+            .remove("brand_name")
+            .remove("brand_voice_prompt")
+            .apply()
+        _userProfile.value = UserProfileState(userId = guestId)
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.clearAllContainers()
+        }
+    }
+
+    private fun applyAuthSession(
+        session: AuthSession,
+        brandNameOverride: String = "",
+        brandVoiceOverride: String = "",
+    ) {
+        val resolvedName = brandNameOverride.trim()
+            .ifBlank { session.displayName }
+            .ifBlank { _userProfile.value.brandName }
+            .ifBlank { session.email.substringBefore("@") }
+        val resolvedVoice = brandVoiceOverride.trim().ifBlank { _userProfile.value.brandVoicePrompt }
+        prefs.edit()
+            .putString("user_id", session.userId)
+            .putString("user_email", session.email)
+            .putString("brand_name", resolvedName)
+            .putString("brand_voice_prompt", resolvedVoice)
+            .putBoolean("onboarding_completed", true)
+            .apply()
+        _userProfile.value = UserProfileState(
+            userId = session.userId,
+            email = session.email,
+            brandName = resolvedName,
+            brandVoicePrompt = resolvedVoice,
+        )
+        syncContainersFromCloud(session.userId)
+    }
+
+    private fun syncContainersFromCloud(uid: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val remote = api.listContainers(uid)
+                remote.forEach { idea ->
+                    dao.upsertContainer(idea.toEntity())
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Cloud container sync skipped/failed", e)
+            }
+        }
+    }
 
     val hasCompletedOnboarding: Boolean
         get() = prefs.getBoolean("onboarding_completed", false) || _userProfile.value.isSignedIn
@@ -405,14 +518,19 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun scheduleToDrafted(containerId: String) {
+    fun scheduleToDrafted(containerId: String, selectedHookIndex: Int = 0) {
         if (_syncState.value is SyncState.Syncing) return
         _syncState.value = SyncState.Syncing
         viewModelScope.launch {
             try {
                 val localIdea = dao.getContainerById(containerId).first()?.toIdeaContainer()
                 val syncBody = localIdea?.let {
-                    DraftedSyncRequest(title = it.title, assets = it.assets, schedule = it.schedule)
+                    DraftedSyncRequest(
+                        title = it.title,
+                        assets = it.assets,
+                        schedule = it.schedule,
+                        selectedHookIndex = selectedHookIndex,
+                    )
                 }
                 val resp = api.scheduleToDrafted(containerId, syncBody)
                 dao.markAsPushed(containerId)

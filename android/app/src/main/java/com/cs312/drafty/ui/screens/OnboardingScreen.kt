@@ -1,6 +1,9 @@
 package com.cs312.drafty.ui.screens
 
-import android.widget.Toast
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -9,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -47,13 +52,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.cs312.drafty.ui.DraftyViewModel
 import com.cs312.drafty.ui.components.DraftyMascot
 import com.cs312.drafty.ui.components.GlassButton
+import com.cs312.drafty.ui.components.GlassToastHost
 import com.cs312.drafty.ui.components.MascotState
 import com.cs312.drafty.ui.components.PixelCheckIcon
 import com.cs312.drafty.ui.components.SoftCard
 import com.cs312.drafty.ui.components.SoftChip
+import com.cs312.drafty.ui.components.rememberGlassToastState
 import com.cs312.drafty.ui.theme.AppBackground
 import com.cs312.drafty.ui.theme.CardSurface
 import com.cs312.drafty.ui.theme.InkBlack
@@ -78,12 +86,31 @@ fun OnboardingScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val toastState = rememberGlassToastState()
     val pagerState = rememberPagerState(pageCount = { PAGE_COUNT })
 
     var email by rememberSaveable { mutableStateOf("") }
     var brandName by rememberSaveable { mutableStateOf("") }
     var brandVoice by rememberSaveable { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        onFinished()
+    }
+
+    fun finishWithMicPrompt() {
+        val hasMic = ContextCompat.checkSelfPermission(
+            ctx,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasMic) {
+            onFinished()
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     val auraColor by animateColorAsState(
         targetValue = when (pagerState.currentPage) {
@@ -96,11 +123,12 @@ fun OnboardingScreen(
         label = "onboardingAura",
     )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(AppBackground),
     ) {
+        val isLandscape = maxWidth > maxHeight && maxWidth >= 560.dp
         // Subtle, airy ambient glow behind the bottom-center area
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
@@ -156,7 +184,7 @@ fun OnboardingScreen(
                 }
             }
 
-            // Swipeable pages with generous whitespace
+            // Swipeable pages with generous whitespace (adapts to side-by-side in landscape)
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier
@@ -164,13 +192,14 @@ fun OnboardingScreen(
                     .fillMaxWidth(),
             ) { page ->
                 when (page) {
-                    0 -> OnboardingWelcomePage()
+                    0 -> OnboardingWelcomePage(isLandscape = isLandscape)
                     1 -> OnboardingStatePage(
                         mascotState = MascotState.LISTENING,
                         stepLabel = "HOLD TO TALK",
                         title = "Speak your rough idea.",
                         description = "Press and hold Drafty to record. Slide up to cancel — even offline, your voice note is safely saved.",
                         chips = listOf("Hold to record", "Slide up to cancel"),
+                        isLandscape = isLandscape,
                     )
                     2 -> OnboardingStatePage(
                         mascotState = MascotState.THINKING,
@@ -178,6 +207,7 @@ fun OnboardingScreen(
                         title = "Ready to film.",
                         description = "Release Drafty to get 3 hooks, a script, shot list, and peak posting slot ready for Drafted.",
                         chips = listOf("Script", "Creatives", "Schedule"),
+                        isLandscape = isLandscape,
                     )
                     else -> OnboardingProfilePage(
                         email = email,
@@ -186,6 +216,7 @@ fun OnboardingScreen(
                         onBrandName = { brandName = it },
                         brandVoice = brandVoice,
                         onBrandVoice = { brandVoice = it },
+                        isLandscape = isLandscape,
                     )
                 }
             }
@@ -194,9 +225,9 @@ fun OnboardingScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 28.dp, vertical = 24.dp),
+                    .padding(horizontal = 28.dp, vertical = if (isLandscape) 12.dp else 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                verticalArrangement = Arrangement.spacedBy(if (isLandscape) 12.dp else 20.dp),
             ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -218,6 +249,7 @@ fun OnboardingScreen(
                     }
                 }
 
+                val ctaModifier = if (isLandscape) Modifier.widthIn(max = 420.dp).fillMaxWidth() else Modifier.fillMaxWidth()
                 if (pagerState.currentPage < PAGE_COUNT - 1) {
                     GlassButton(
                         text = if (pagerState.currentPage == PAGE_COUNT - 2) "Set Up Profile" else "Continue",
@@ -227,7 +259,7 @@ fun OnboardingScreen(
                                 pagerState.animateScrollToPage(pagerState.currentPage + 1)
                             }
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = ctaModifier,
                     )
                 } else {
                     val canSave = email.isNotBlank() && brandName.isNotBlank() && !saving
@@ -243,19 +275,15 @@ fun OnboardingScreen(
                             vm.saveUserProfile(email, brandName, brandVoice) { res ->
                                 saving = false
                                 res.onSuccess {
-                                    onFinished()
+                                    finishWithMicPrompt()
                                 }.onFailure {
                                     vm.saveProfileLocally(email, brandName, brandVoice)
-                                    Toast.makeText(
-                                        ctx,
-                                        "Profile saved on this device.",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                    onFinished()
+                                    toastState.show("Profile saved on this device.")
+                                    finishWithMicPrompt()
                                 }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = ctaModifier,
                     )
                     Text(
                         text = "Skip for now",
@@ -265,13 +293,19 @@ fun OnboardingScreen(
                             .clip(CircleShape)
                             .clickable(enabled = !saving) {
                                 vm.completeOnboarding()
-                                onFinished()
+                                finishWithMicPrompt()
                             }
                             .padding(horizontal = 12.dp, vertical = 4.dp),
                     )
                 }
             }
         }
+
+        GlassToastHost(
+            state = toastState,
+            bottomPadding = 112.dp,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
@@ -280,21 +314,8 @@ fun OnboardingScreen(
  * with generous open whitespace.
  */
 @Composable
-private fun OnboardingWelcomePage() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 36.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        DraftyMascot(
-            state = MascotState.IDLE,
-            modifier = Modifier.size(78.dp),
-        )
-
-        Spacer(Modifier.height(32.dp))
-
+private fun OnboardingWelcomePage(isLandscape: Boolean) {
+    val content: @Composable () -> Unit = {
         Text(
             text = "welcome to",
             style = MaterialTheme.typography.bodyLarge.copy(
@@ -304,9 +325,7 @@ private fun OnboardingWelcomePage() {
             ),
             color = MutedGray,
         )
-
-        Spacer(Modifier.height(12.dp))
-
+        Spacer(Modifier.height(10.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -334,9 +353,7 @@ private fun OnboardingWelcomePage() {
                 color = InkBlack,
             )
         }
-
-        Spacer(Modifier.height(24.dp))
-
+        Spacer(Modifier.height(18.dp))
         Text(
             text = "Speak rough ideas.\nGet ready-to-film drafts.",
             style = MaterialTheme.typography.bodyLarge.copy(
@@ -344,8 +361,33 @@ private fun OnboardingWelcomePage() {
                 lineHeight = 24.sp,
             ),
             color = MutedGray,
-            textAlign = TextAlign.Center,
+            textAlign = if (isLandscape) TextAlign.Start else TextAlign.Center,
         )
+    }
+
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
+        ) {
+            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(84.dp))
+            Column(horizontalAlignment = Alignment.Start) { content() }
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 36.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            DraftyMascot(state = MascotState.IDLE, modifier = Modifier.size(78.dp))
+            Spacer(Modifier.height(32.dp))
+            content()
+        }
     }
 }
 
@@ -356,64 +398,75 @@ private fun OnboardingStatePage(
     title: String,
     description: String,
     chips: List<String>,
+    isLandscape: Boolean,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 38.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        DraftyMascot(
-            state = mascotState,
-            modifier = Modifier.size(104.dp),
-        )
-
-        Spacer(Modifier.height(38.dp))
-
-        Text(
-            text = stepLabel,
-            style = MaterialTheme.typography.labelSmall.copy(
-                letterSpacing = 1.4.sp,
-                fontWeight = FontWeight.SemiBold,
-            ),
-            color = MutedGray,
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineMedium.copy(
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.5).sp,
-            ),
-            color = InkBlack,
-            textAlign = TextAlign.Center,
-        )
-
-        Spacer(Modifier.height(14.dp))
-
-        Text(
-            text = description,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = 15.5.sp,
-                lineHeight = 24.sp,
-            ),
-            color = MutedGray,
-            textAlign = TextAlign.Center,
-        )
-
-        Spacer(Modifier.height(28.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            chips.forEach { label ->
-                SoftChip(text = label, fillColor = CardSurface)
+    val textBlock: @Composable (Alignment.Horizontal, TextAlign) -> Unit = { align, textAlign ->
+        Column(horizontalAlignment = align) {
+            Text(
+                text = stepLabel,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.4.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                color = MutedGray,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontSize = if (isLandscape) 24.sp else 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.5).sp,
+                ),
+                color = InkBlack,
+                textAlign = textAlign,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                ),
+                color = MutedGray,
+                textAlign = textAlign,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                chips.forEach { label ->
+                    SoftChip(text = label, fillColor = CardSurface)
+                }
             }
+        }
+    }
+
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
+        ) {
+            DraftyMascot(state = mascotState, modifier = Modifier.size(96.dp))
+            Box(Modifier.widthIn(max = 420.dp)) {
+                textBlock(Alignment.Start, TextAlign.Start)
+            }
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 38.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            DraftyMascot(state = mascotState, modifier = Modifier.size(104.dp))
+            Spacer(Modifier.height(38.dp))
+            textBlock(Alignment.CenterHorizontally, TextAlign.Center)
         }
     }
 }
@@ -426,6 +479,7 @@ private fun OnboardingProfilePage(
     onBrandName: (String) -> Unit,
     brandVoice: String,
     onBrandVoice: (String) -> Unit,
+    isLandscape: Boolean,
 ) {
     Column(
         modifier = Modifier
@@ -435,32 +489,34 @@ private fun OnboardingProfilePage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        DraftyMascot(
-            state = MascotState.CELEBRATING,
-            modifier = Modifier.size(64.dp),
-        )
-        Spacer(Modifier.height(20.dp))
+        if (!isLandscape) {
+            DraftyMascot(
+                state = MascotState.CELEBRATING,
+                modifier = Modifier.size(64.dp),
+            )
+            Spacer(Modifier.height(20.dp))
+        }
         Text(
             text = "Set up your voice",
             style = MaterialTheme.typography.headlineMedium.copy(
-                fontSize = 26.sp,
+                fontSize = if (isLandscape) 22.sp else 26.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5).sp,
             ),
             color = InkBlack,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
             text = "Tailor every hook and caption to your style.",
             style = MaterialTheme.typography.bodyMedium,
             color = MutedGray,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(if (isLandscape) 14.dp else 28.dp))
 
         SoftCard(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = if (isLandscape) Modifier.widthIn(max = 520.dp).fillMaxWidth() else Modifier.fillMaxWidth(),
             color = CardSurface,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -496,5 +552,13 @@ private fun OnboardingProfilePage(
                 )
             }
         }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "Drafty needs mic access so you can hold to brain-dump anytime.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedGray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
     }
 }

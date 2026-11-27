@@ -5,13 +5,20 @@ import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
+import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface DraftyApiService {
+
+    @GET("api/v1/containers")
+    suspend fun listContainers(
+        @Query("user_id") userId: String,
+    ): List<IdeaContainer>
 
     @Multipart
     @POST("api/v1/voice/transcribe-and-parse")
