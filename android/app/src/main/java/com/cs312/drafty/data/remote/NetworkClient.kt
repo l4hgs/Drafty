@@ -67,7 +67,11 @@ object NetworkClient {
             .retryOnConnectionFailure(true)
             .addInterceptor(authInterceptor)
             .addInterceptor(hostFallbackInterceptor)
-            .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
+            .addInterceptor(
+                HttpLoggingInterceptor().apply {
+                    level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
+                },
+            )
             .build()
     }
 

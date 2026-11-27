@@ -2,6 +2,9 @@ package com.cs312.drafty.core.auth
 
 import android.content.Context
 import android.net.Uri
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import android.util.Log
 import com.cs312.drafty.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +19,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.KeyStore
 import java.util.concurrent.TimeUnit
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class EmailConfirmationRequiredException(val email: String) :
     RuntimeException("Please verify $email using the link we sent to your inbox.")
@@ -286,13 +294,62 @@ class SupabaseAuthManager(context: Context) {
         }
     }
 
+    private fun getOrCreateKeystoreKey(): SecretKey {
+        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        (ks.getKey(KEYSTORE_ALIAS, null) as? SecretKey)?.let { return it }
+        val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        keyGen.init(
+            KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build(),
+        )
+        return keyGen.generateKey()
+    }
+
+    private fun encryptSecret(plain: String): String {
+        if (plain.isBlank()) return ""
+        return try {
+            val cipher = Cipher.getInstance(AES_GCM_TRANSFORM)
+            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKeystoreKey())
+            val iv = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
+            val ct = Base64.encodeToString(cipher.doFinal(plain.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+            "$ENC_PREFIX$iv:$ct"
+        } catch (e: Exception) {
+            Log.w(TAG, "Keystore encrypt unavailable; falling back", e)
+            plain
+        }
+    }
+
+    private fun decryptSecret(stored: String?): String {
+        if (stored.isNullOrBlank()) return ""
+        if (!stored.startsWith(ENC_PREFIX)) return stored // seamless migration for pre-encryption installs
+        return try {
+            val payload = stored.removePrefix(ENC_PREFIX)
+            val sep = payload.indexOf(':')
+            if (sep <= 0) return ""
+            val iv = Base64.decode(payload.substring(0, sep), Base64.NO_WRAP)
+            val ct = Base64.decode(payload.substring(sep + 1), Base64.NO_WRAP)
+            val cipher = Cipher.getInstance(AES_GCM_TRANSFORM)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKeystoreKey(), GCMParameterSpec(128, iv))
+            String(cipher.doFinal(ct), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.w(TAG, "Keystore decrypt failed; clearing stale secret", e)
+            ""
+        }
+    }
+
     private fun saveSession(session: AuthSession) {
         prefs.edit()
             .putString(KEY_USER_ID, session.userId)
             .putString(KEY_EMAIL, session.email)
             .putString(KEY_DISPLAY_NAME, session.displayName)
-            .putString(KEY_ACCESS_TOKEN, session.accessToken)
-            .putString(KEY_REFRESH_TOKEN, session.refreshToken)
+            .putString(KEY_ACCESS_TOKEN, encryptSecret(session.accessToken))
+            .putString(KEY_REFRESH_TOKEN, encryptSecret(session.refreshToken))
             .putLong(KEY_EXPIRES_AT, session.expiresAtEpochSec)
             .apply()
         _session.value = session
@@ -301,13 +358,13 @@ class SupabaseAuthManager(context: Context) {
 
     private fun loadStoredSession(): AuthSession? {
         val uid = prefs.getString(KEY_USER_ID, null)?.takeIf { it.isNotBlank() } ?: return null
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null)?.takeIf { it.isNotBlank() } ?: return null
+        val token = decryptSecret(prefs.getString(KEY_ACCESS_TOKEN, null)).takeIf { it.isNotBlank() } ?: return null
         return AuthSession(
             userId = uid,
             email = prefs.getString(KEY_EMAIL, "").orEmpty(),
             displayName = prefs.getString(KEY_DISPLAY_NAME, "").orEmpty(),
             accessToken = token,
-            refreshToken = prefs.getString(KEY_REFRESH_TOKEN, "").orEmpty(),
+            refreshToken = decryptSecret(prefs.getString(KEY_REFRESH_TOKEN, null)),
             expiresAtEpochSec = prefs.getLong(KEY_EXPIRES_AT, 0L),
         )
     }
@@ -328,6 +385,10 @@ class SupabaseAuthManager(context: Context) {
 
     companion object {
         private const val TAG = "SupabaseAuthManager"
+        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        private const val KEYSTORE_ALIAS = "drafty_auth_aes_key"
+        private const val AES_GCM_TRANSFORM = "AES/GCM/NoPadding"
+        private const val ENC_PREFIX = "enc_v1:"
         private const val PREFS_NAME = "drafty_auth_session"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_EMAIL = "email"

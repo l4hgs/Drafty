@@ -39,4 +39,7 @@ interface DraftyDao {
 
     @Query("DELETE FROM pending_voice_notes WHERE id = :id")
     suspend fun deletePendingVoiceNote(id: String)
+
+    @Query("DELETE FROM pending_voice_notes")
+    suspend fun clearAllPendingVoiceNotes()
 }

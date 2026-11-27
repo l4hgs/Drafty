@@ -118,12 +118,18 @@ fun OnboardingScreen(
     var checkingVerify by remember { mutableStateOf(false) }
     var resendingEmail by remember { mutableStateOf(false) }
 
-    // Auto-dismiss verification modal and advance if deep-link confirmation completes
+    // Smoothly advance to Page 5 (Voice Setup) once authenticated (via Google OAuth or email verification)
     LaunchedEffect(authSession) {
-        if (authSession != null && pendingVerifyEmail != null) {
+        val session = authSession ?: return@LaunchedEffect
+        if (pendingVerifyEmail != null) {
             pendingVerifyEmail = null
-            brandName = authSession?.displayName.orEmpty().ifBlank { brandName }
-            scope.launch { pagerState.animateScrollToPage(4) }
+        }
+        if (brandName.isBlank()) {
+            brandName = session.displayName
+        }
+        if (pagerState.currentPage == 3) {
+            delay(180L)
+            pagerState.animateScrollToPage(4)
         }
     }
 
@@ -218,9 +224,10 @@ fun OnboardingScreen(
                 }
             }
 
-            // Swipeable pages with generous whitespace (adapts to side-by-side in landscape)
+            // Swipeable pages with generous whitespace (blocks swiping past Account page until signed in)
             HorizontalPager(
                 state = pagerState,
+                userScrollEnabled = pagerState.currentPage < 3 || authSession != null,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -366,17 +373,6 @@ fun OnboardingScreen(
                                     }
                                 },
                                 modifier = ctaModifier,
-                            )
-                            Text(
-                                text = "Skip for now",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MutedGray,
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .clickable(enabled = !busy) {
-                                        scope.launch { pagerState.animateScrollToPage(4) }
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 4.dp),
                             )
                         }
                     }
