@@ -1,8 +1,8 @@
 # **`{ Drafty }` — UI Design System & Interface Guide**
 
-**Design Philosophy:** *Apple Liquid Glass × 1-Bit Pixel Craft*  
+**Design Philosophy:** *Apple Liquid Glass × 1-Bit Pixel Craft (Drafted-Aligned v2.0)*  
 **Platform:** Native Android (Kotlin + Jetpack Compose Material 3)  
-**Last Updated:** November 25, 2026
+**Last Updated:** November 27, 2026
 
 ---
 
@@ -85,8 +85,8 @@ A `24×24` 1-bit monochrome (`#111111` on transparent) Finder-style `:` + `)` pi
 | **`CELEBRATING`** | <img src="assets/mascot/drafty_celebrating.gif" width="56" alt="Celebrating" /> | Calm happy `^ ^` eyes, twinkling pixel sparkle + checkmark, gentle `1.04×` scale-in (no repetitive jumping). |
 
 ### 3.2 Reusable Primitives ([Common.kt](../android/app/src/main/java/com/cs312/drafty/ui/components/Common.kt))
-- **Glass Controls:** `GlassIconButton` (`44.dp`–`48.dp` circular frosted glass) and `GlassButton` (light frosted, dark charcoal emphasis, and destructive red variants).
-- **1-Bit Pixel Micro-Icons (`PixelIconGrid`):** `PixelUserIcon` (`14×14` circled avatar), `PixelQueueIcon`, `PixelIdeasIcon`, `PixelBackIcon`, `PixelEditIcon`, `PixelCheckIcon`, `PixelSendIcon`, `PixelTrashIcon`, `PixelShareIcon`, `PixelCopyIcon`, `PixelSparkleIcon`, `PixelSyncIcon`, `PixelCloseIcon`.
+- **Glass Controls & Feedback:** `GlassIconButton` (`44.dp`–`48.dp` circular frosted glass), `GlassButton` (light frosted, dark charcoal emphasis, and destructive red variants), `GlassToastState` / `GlassToastHost` (frosted floating toasts with optional **Undo** action), `HapticChoreographer`, `Modifier.springPressScale()`, and `SoftCard` hairline borders aligned with **Drafted**.
+- **1-Bit Pixel Micro-Icons (`PixelIconGrid`):** `PixelUserIcon` (`14×14` circled avatar), `PixelQueueIcon`, `PixelIdeasIcon`, `PixelBackIcon`, `PixelEditIcon`, `PixelCheckIcon`, `PixelSendIcon`, `PixelTrashIcon`, `PixelShareIcon`, `PixelCopyIcon`, `PixelSparkleIcon`, `PixelSyncIcon`, `PixelCloseIcon`, `PixelLockIcon`, `PixelEyeIcon`, `PixelEyeOffIcon`.
 - **Mainstream Social Media Badges (`PlatformLogoBadge` + `canonicalPlatform`):** Vector brand logos for **Instagram**, **TikTok**, **YouTube**, **Facebook**, **X**, **LinkedIn**, and **Threads**, automatically deduplicating sub-formats (e.g., *Instagram Stories / Reels / Post* → **Instagram**).
 
 ---
@@ -95,41 +95,44 @@ A `24×24` 1-bit monochrome (`#111111` on transparent) Finder-style `:` + `)` pi
 
 ```mermaid
 flowchart LR
-    OB["OnboardingScreen\n(First Launch Only)"] -->|Profile Saved / Skip| HOME["HomeScreen\n({ Drafty } + Notched Dock)"]
-    HOME -->|Press & Hold Drafty| REC["LiquidGlassRecordingOverlay\n(Edge RGB Wave + Waveform)"]
-    REC -->|Drafted| DETAIL["IdeaContainerScreen\n(Script · Creatives · Schedule)"]
+    OB["OnboardingScreen\n(5-Step + Supabase Auth)"] -->|Authenticated| HOME["HomeScreen\n({ Drafty } + Notched Dock)"]
+    HOME -->|Hold / Lock Drafty| REC["LiquidGlassRecordingOverlay\n(Edge RGB Wave + Lock-to-Record)"]
+    REC -->|Drafted| DETAIL["IdeaContainerScreen\n(Swipeable Script · Creatives · Schedule)"]
     HOME -->|Tap Ideas / Quick Pill| DETAIL
     HOME -->|Left Dock Button| Q["OfflineQueueSheet"]
-    HOME -->|Right Dock Button| I["RecentIdeasSheet\n(Search + Filters)"]
-    HOME -->|Top-Right Avatar| P["CreatorProfileSheet"]
+    HOME -->|Right Dock Button| I["RecentIdeasSheet\n(Counter Bar + Swipe Undo)"]
+    HOME -->|Top-Right Avatar| P["CreatorProfileSheet\n(Profile + Sign Out)"]
+    DETAIL -->|Schedule & Open| DRAFTED["Drafted Companion App\n(com.example.drafted)"]
 ```
 
-### 4.1 Onboarding ([OnboardingScreen.kt](../android/app/src/main/java/com/cs312/drafty/ui/screens/OnboardingScreen.kt))
-- 4-page swipeable `HorizontalPager` with generous whitespace and subtle bottom ambient glow:
+### 4.1 Onboarding & Auth ([OnboardingScreen.kt](../android/app/src/main/java/com/cs312/drafty/ui/screens/OnboardingScreen.kt))
+- Mandatory 5-page swipeable `HorizontalPager` with responsive two-pane landscape support and subtle bottom ambient glow:
   1. **`{ Drafty }` Welcome Hero** (`IDLE`) matching the Home screen aesthetic.
-  2. **Hold to Talk** (`LISTENING`) — explains hold-to-record, slide-up-to-cancel, and offline auto-save.
+  2. **Hold or Lock to Talk** (`LISTENING`) — explains hold-to-record, slide-to-lock hands-free recording, slide-up-to-cancel, and offline auto-save.
   3. **Structured in Seconds** (`THINKING`) — introduces `Script`, `Creatives`, and `Schedule`.
-  4. **Set Up Your Voice** (`CELEBRATING`) — collects `email`, `brand_name`, and optional `brand_voice_prompt` (with offline local fallback and `"Skip for now"`).
+  4. **Set Up Your Voice** (`CELEBRATING`) — collects `brand_name` and optional `brand_voice_prompt`.
+  5. **Unified Account Auth** — Email + Password (with `PixelEyeIcon`/`PixelEyeOffIcon` visibility toggle and reassuring `EmailVerificationWaitingModal` with 60s resend cooldown) or Google OAuth (`drafty://auth-callback`), synced seamlessly with **Drafted**.
 
 ### 4.2 Home Screen ([HomeScreen.kt](../android/app/src/main/java/com/cs312/drafty/ui/screens/HomeScreen.kt))
 - **Top-Right:** `44.dp` circular `GlassIconButton` with `14×14` pixelated `PixelUserIcon`.
-- **Upper-Middle Optical Center (`BiasAlignment(0f, -0.18f)`):** `"hey, <name>"` (defaults to `"hey, Drafter"`), pixel **`{ Drafty }`** wordmark, and a compact frosted quick-resume pill (`Latest: … →` or `● N offline note ready to sync →`).
+- **Upper-Middle Optical Center (`BiasAlignment(0f, -0.18f)`):** `"hey, <name>"` (defaults to `"hey, Drafter"`), pixel **`{ Drafty }`** wordmark, and a compact frosted quick-resume pill (`Latest: … →` or `● N offline note ready to sync →`). Automatically adapts to a **two-pane landscape layout** on wide viewports.
 - **Background Layer:** 3 softly drifting rounded ambient prompt bubbles ([PixelSpeechBubble.kt](../android/app/src/main/java/com/cs312/drafty/ui/components/PixelSpeechBubble.kt)) cycling contextual prompts every `6s`; tapping any bubble pins it as an active recording prompt.
 - **Bottom Notched Liquid-Glass Dock (`zIndex 2`):**
   - Centered pink-to-orange radial ombré (`0.34×` height) behind Drafty.
   - Smooth semicircular notched glass pill (`64.dp` tall, `44.dp` horizontal inset) housing `PixelQueueIcon` (left, with `8.dp` coral dot when queued) and `PixelIdeasIcon` (right).
   - Protruding `94.dp` frosted pearl-white circular Drafty button (`-30.dp` offset, `20.dp` shadow) nested cleanly inside the notch with a `7.dp` gap and zero glass overlap.
-  - While holding, the bottom Drafty sprite morphs into a voice-pulsing `ThumbAnchorRing` so only one Drafty appears on screen.
+  - While holding, the bottom Drafty sprite morphs into a voice-pulsing `ThumbAnchorRing` with directional cues to slide left/right to **Lock** or slide up to **Cancel**.
+- **Recent Ideas Sheet:** Drafted-aligned `IDEAS · SYNCED · DRAFTS` monospace (`MonoFont`) counter bar, relative creation dates (`Today` / `Yesterday` / `MMM d`), `"Hook: ..."` preview lines, live search + platform filters, and `SwipeToDismissBox` deletion with a frosted `GlassToast` **Undo** action.
 
 ### 4.3 Live Recording Overlay ([LiquidGlassRecordingOverlay.kt](../android/app/src/main/java/com/cs312/drafty/ui/components/LiquidGlassRecordingOverlay.kt))
 - Full-viewport frosted glass (`zIndex 1`, blurring underlying Home content on Android 12+) framed by an Apple Intelligence–style screen-edge RGB iridescent wave (`96`-segment C1-continuous perimeter path driven by multi-harmonic sine waves + live `amplitudeFlow`).
-- Interior HUD: optional `"Prompt: …"` pill, `112.dp` `DraftyMascot(LISTENING)`, `"Listening…"`, monospace timer, background-free [WaveformVisualizer.kt](../android/app/src/main/java/com/cs312/drafty/ui/components/WaveformVisualizer.kt), and spatial upward `↑` slide-to-cancel chevron tinting smoothly toward coral `#E53935`.
-- Mirrors opening animation cleanly on close and transitions smoothly into `Processing` (`THINKING` + Whisper → GPT-4o mini steps), `Celebrating`, or plain-English `Error` recovery.
+- Interior HUD: optional `"Prompt: …"` pill, `112.dp` `DraftyMascot(LISTENING)`, `"Listening…"` / `"Locked · Hands-free"`, monospace timer, background-free [WaveformVisualizer.kt](../android/app/src/main/java/com/cs312/drafty/ui/components/WaveformVisualizer.kt), **Lock-to-Record** (`PixelLockIcon`) with Stop/Cancel buttons once locked, and spatial upward `↑` slide-to-cancel chevron tinting smoothly toward coral `#E53935`.
+- Mirrors opening animation cleanly on close and transitions smoothly into `Processing` (`THINKING` + Whisper → Moderation + GPT-4o mini steps, with `6000ms` Render cold-start reassurance), `Celebrating`, or plain-English `Error` recovery.
 
 ### 4.4 Idea Container ([IdeaContainerScreen.kt](../android/app/src/main/java/com/cs312/drafty/ui/screens/IdeaContainerScreen.kt))
-- **Bokeh Diffusion Veils:** Progressive frosted + Android 12+ `Modifier.blur(14.dp..16.dp)` backdrops behind both the pinned top bar (`Back`, `Share`, `Delete`) and floating bottom `Dock` (`Edit`/`Save` + `Schedule to Drafted`).
+- **Responsive Layout & Bokeh Veils:** Progressive frosted + Android 12+ `Modifier.blur(14.dp..16.dp)` backdrops behind both the pinned top bar (`Back`, `Share`, `Delete`) and floating bottom `Dock` (`Edit`/`Save`/`Cancel` + `Schedule to Drafted`), plus a **two-pane landscape layout** keeping the header and actions anchored alongside the tabbed content.
 - **Header Card:** Title, summary, deduplicated `PlatformLogoBadge` row, and muted lavender content pillar chip.
-- **Glassmorphic Tab Switcher (`Script` | `Creatives` | `Schedule`):** Smooth `380ms` color transition across ambient background patches, active tab label, and solid muted inner tiles:
-  - **Script:** 3 numbered hook tiles + `✦ Regenerate` AI button, caption/script + `Copy` button, CTA, and steel-blue `#hashtags`.
-  - **Creatives:** Dusty-rose visual style chip, numbered shot list + `Copy` button, and text overlays.
-  - **Schedule:** Single-line, equal-height aligned `Date` (`MMM d`), `Day` (`Thu`), and `Time` (`6:00 PM`) sage tiles with native pickers and `"Why this slot"` reasoning.
+- **Swipeable Foundation `HorizontalPager` Tabs (`Script` | `Creatives` | `Schedule`):** Smooth `380ms` color transition across ambient background patches, active tab label, and solid muted inner tiles:
+  - **Script:** 3 numbered hook tiles with **tap-to-select Primary Hook** + single-line `✦ Regenerate` AI button, caption/script + `Copy` button, CTA, and steel-blue `#hashtags`.
+  - **Creatives:** Dusty-rose visual style chip, numbered shot list (editable inline) + `Copy` button, and text overlays.
+  - **Schedule:** Single-line, equal-height aligned `Date` (`MMM d`), `Day` (auto-derived from date), and `Time` (`6:00 PM`) sage tiles with native pickers, `"Why this slot"` reasoning, and `DraftedHandoffCard` for 1-tap launch into **Drafted** (`com.example.drafted`).

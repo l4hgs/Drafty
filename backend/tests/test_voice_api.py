@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -90,7 +90,9 @@ class StubAIService:
 
 class VoiceApiTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        main._AI_RATE_BUCKETS.clear()
         self.saved_drafts: list[dict] = []
+        self.finalized_drafts: dict[str, str | None] = {}
         self.saved_containers: dict[str, dict] = {}
 
         async def fake_upload(user_id: str, audio: bytes, ext: str, content_type: str, *, strict: bool = False):
@@ -105,8 +107,17 @@ class VoiceApiTestCase(unittest.TestCase):
             })
             return SAMPLE_DRAFT_ID
 
+        async def fake_finalize_draft(draft_id: str, audio_path: str | None = None):
+            self.finalized_drafts[draft_id] = audio_path
+            for d in self.saved_drafts:
+                if d["id"] == draft_id:
+                    d["audio_path"] = audio_path
+
         async def fake_get_brand_voice(user_id: str) -> str | None:
             return self.brand_voice_override
+
+        async def fake_get_recent_scheduled_dates(user_id: str) -> list[str]:
+            return []
 
         self.brand_voice_override: str | None = None
 
@@ -121,23 +132,31 @@ class VoiceApiTestCase(unittest.TestCase):
             rows = [r for r in self.saved_containers.values() if r.get("user_id") == user_id]
             return [IdeaContainer(**{k: v for k, v in r.items() if k != "user_id"}) for r in reversed(rows)]
 
-        async def fake_update_container(container_id: str, updates):
+        async def fake_update_container(container_id: str, updates, *, owner_user_id: str | None = None):
             if container_id not in self.saved_containers:
                 raise main.db_service.ContainerNotFoundError(container_id)
             row = dict(self.saved_containers[container_id])
+            if owner_user_id and row.get("user_id") != owner_user_id:
+                raise main.db_service.ContainerNotFoundError(container_id)
             patch_dict = updates.model_dump(mode="json", exclude_none=True)
             row.update(patch_dict)
             self.saved_containers[container_id] = row
             return IdeaContainer(**{k: v for k, v in row.items() if k != "user_id"})
 
-        async def fake_delete_container(container_id: str):
+        async def fake_delete_container(container_id: str, *, owner_user_id: str | None = None):
             if container_id not in self.saved_containers:
+                raise main.db_service.ContainerNotFoundError(container_id)
+            row = self.saved_containers[container_id]
+            if owner_user_id and row.get("user_id") != owner_user_id:
                 raise main.db_service.ContainerNotFoundError(container_id)
             del self.saved_containers[container_id]
             return {"container_id": container_id, "deleted": True}
 
-        async def fake_sync(container_id: str, updates=None):
+        async def fake_sync(container_id: str, updates=None, *, target_user_id: str | None = None):
             if container_id not in self.saved_containers:
+                raise main.db_service.ContainerNotFoundError(container_id)
+            row = self.saved_containers[container_id]
+            if target_user_id and row.get("user_id") != target_user_id:
                 raise main.db_service.ContainerNotFoundError(container_id)
             sched_for = "2026-11-13T18:00"
             if updates and updates.schedule:
@@ -162,11 +181,14 @@ class VoiceApiTestCase(unittest.TestCase):
         self.saved_profiles: dict[str, dict] = {}
 
         self.patches = [
+            patch.object(type(main.settings), "REQUIRE_AUTH", new_callable=PropertyMock, return_value=False),
             patch.object(main.db_service, "get_client", return_value=object()),
             patch.object(main.db_service, "upload_audio_to_storage", fake_upload),
             patch.object(main.db_service, "upsert_user_profile", fake_upsert_profile),
             patch.object(main.db_service, "get_brand_voice", fake_get_brand_voice),
+            patch.object(main.db_service, "get_recent_scheduled_dates", fake_get_recent_scheduled_dates),
             patch.object(main.db_service, "save_voice_draft", fake_save_draft),
+            patch.object(main.db_service, "finalize_voice_draft", fake_finalize_draft),
             patch.object(main.db_service, "save_content_container", fake_save_container),
             patch.object(main.db_service, "list_user_containers", fake_list_containers),
             patch.object(main.db_service, "update_content_container", fake_update_container),
@@ -480,7 +502,7 @@ class VoiceApiTestCase(unittest.TestCase):
         self.assertEqual(edit_res.json()["scheduled_for"], "2026-11-15T20:00")
 
         # 3) Database error on schedule-to-drafted returns 502 DB_FAILED
-        async def failing_sync(_cid: str, _updates=None):
+        async def failing_sync(_cid: str, _updates=None, *, target_user_id: str | None = None):
             raise main.db_service.DatabaseError("sync failed")
 
         with patch.object(main.db_service, "sync_to_drafted_workspace", failing_sync):
@@ -513,7 +535,7 @@ class VoiceApiTestCase(unittest.TestCase):
         self.assertEqual(missing_patch.status_code, 404)
         self.assertEqual(missing_patch.json()["code"], "CONTAINER_NOT_FOUND")
 
-        async def failing_update(_cid: str, _updates):
+        async def failing_update(_cid: str, _updates, *, owner_user_id: str | None = None):
             raise main.db_service.DatabaseError("update failed")
 
         with patch.object(main.db_service, "update_content_container", failing_update):
@@ -530,13 +552,75 @@ class VoiceApiTestCase(unittest.TestCase):
         self.assertEqual(missing_del.status_code, 404)
         self.assertEqual(missing_del.json()["code"], "CONTAINER_NOT_FOUND")
 
-        async def failing_delete(_cid: str):
+        async def failing_delete(_cid: str, *, owner_user_id: str | None = None):
             raise main.db_service.DatabaseError("delete failed")
 
         with patch.object(main.db_service, "delete_content_container", failing_delete):
             db_del = self.client.delete(f"/api/v1/containers/{missing_id}")
         self.assertEqual(db_del.status_code, 502)
         self.assertEqual(db_del.json()["code"], "DB_FAILED")
+
+    def test_security_headers_and_auth_verified_page(self):
+        health = self.client.get("/health")
+        self.assertEqual(health.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(health.headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(health.headers.get("Referrer-Policy"), "no-referrer")
+
+        verified = self.client.get("/auth/verified")
+        self.assertEqual(verified.status_code, 200)
+        self.assertEqual(verified.headers.get("Cache-Control"), "no-store")
+        self.assertIn("Email verified!", verified.text)
+
+    def test_require_auth_rejects_missing_and_invalid_bearer_tokens(self):
+        with patch.object(type(main.settings), "REQUIRE_AUTH", new_callable=PropertyMock, return_value=True):
+            missing = self.client.get("/api/v1/containers", params={"user_id": SAMPLE_USER_ID})
+            self.assertEqual(missing.status_code, 401)
+            self.assertEqual(missing.json()["code"], "AUTH_REQUIRED")
+
+            malformed = self.client.get(
+                "/api/v1/containers",
+                params={"user_id": SAMPLE_USER_ID},
+                headers={"Authorization": "Basic abc123"},
+            )
+            self.assertEqual(malformed.status_code, 401)
+            self.assertEqual(malformed.json()["code"], "INVALID_AUTH_HEADER")
+
+    def test_idor_protection_blocks_cross_user_patch_and_delete(self):
+        created = self.client.post(
+            "/api/v1/voice/transcribe-and-parse",
+            data={"user_id": SAMPLE_USER_ID, "client_timestamp": "2026-11-27T10:00:00Z"},
+            files={"file": ("memo.m4a", VALID_AUDIO_BYTES, "audio/m4a")},
+        ).json()
+        cid = created["id"]
+        other_user = "99999999-8888-7777-6666-555555555555"
+
+        with patch("auth._verify_token_sync", return_value=other_user):
+            headers = {"Authorization": "Bearer fake-valid-jwt"}
+            patch_res = self.client.patch(f"/api/v1/containers/{cid}", json={"title": "Hijacked"}, headers=headers)
+            self.assertEqual(patch_res.status_code, 404)
+            self.assertEqual(patch_res.json()["code"], "CONTAINER_NOT_FOUND")
+
+            del_res = self.client.delete(f"/api/v1/containers/{cid}", headers=headers)
+            self.assertEqual(del_res.status_code, 404)
+            self.assertEqual(del_res.json()["code"], "CONTAINER_NOT_FOUND")
+
+    def test_ai_rate_limiter_returns_429_after_quota(self):
+        with patch.object(main, "_AI_RATE_MAX_REQUESTS", 2):
+            for _ in range(2):
+                ok = self.client.post(
+                    "/api/v1/voice/transcribe-and-parse",
+                    data={"user_id": SAMPLE_USER_ID, "client_timestamp": "2026-11-27T10:00:00Z"},
+                    files={"file": ("memo.m4a", VALID_AUDIO_BYTES, "audio/m4a")},
+                )
+                self.assertEqual(ok.status_code, 200)
+            blocked = self.client.post(
+                "/api/v1/voice/transcribe-and-parse",
+                data={"user_id": SAMPLE_USER_ID, "client_timestamp": "2026-11-27T10:00:00Z"},
+                files={"file": ("memo.m4a", VALID_AUDIO_BYTES, "audio/m4a")},
+            )
+            self.assertEqual(blocked.status_code, 429)
+            self.assertEqual(blocked.json()["code"], "RATE_LIMITED")
+            self.assertIn("Retry-After", blocked.headers)
 
 
 

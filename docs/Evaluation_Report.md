@@ -72,3 +72,26 @@ Simulated mid-upload link drops triggered while transmitting `.m4a` voice memos.
 | 8 | 4G/5G -> Wi-Fi | 39% | `QUEUED -> SYNCED` | 782 ms | 2.40s | **Yes (100%)** |
 | 9 | Wi-Fi -> 4G/5G | 41% | `QUEUED -> SYNCED` | 551 ms | 3.36s | **Yes (100%)** |
 | 10 | 4G/5G -> Wi-Fi | 68% | `QUEUED -> SYNCED` | 516 ms | 2.87s | **Yes (100%)** |
+
+---
+
+## **5. Drafty v2.0 Pipeline, Security & Companion Verification (November 27, 2026)**
+
+Following the Week 3 baseline evaluation, **Drafty v2.0** introduced pipeline latency improvements, full authentication/security hardening, and live integration with the companion **Drafted** Flutter app (`https://github.com/l4hgs/Drafted`):
+
+- **Pipeline Latency Optimizations:** OpenAI `omni-moderation-latest` now executes concurrently alongside `gpt-4o-mini` Structured Outputs, audio archival upload runs non-blocking, `voice_drafts` finalization executes in the background, and a silent `/health` warm-up ping on Android app launch mitigates Render free-tier cold starts (paired with a `6000ms` UI reassurance prompt when warming up).
+- **Security Hardening Verified:**
+  - Strict Supabase RLS (`003_harden_rls_auth_only.sql`) removes anonymous fallback policies so all Drafty and Drafted tables require `auth.uid()::text = user_id`.
+  - FastAPI enforces Bearer JWT verification (`backend/auth.py`), per-user ownership checks (IDOR protection), sliding-window AI rate limiting (`15 req / 5 min` → `429`), and HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on `/auth/*`).
+  - Android stores session tokens in **AndroidKeyStore AES-256-GCM**, disables `allowBackup`, enforces HTTPS-only `network_security_config.xml` (cleartext limited to local debug hosts), restricts HTTP body logging to debug builds, and wipes Room + cached `.m4a` files on Sign Out.
+- **Cross-App Sync, Live Cloud Probes & Automated Verification (Executed November 27, 2026):**
+  - **Backend API & Security Suite (`backend/tests/test_voice_api.py`):** **20 / 20 passed** in `0.374s` (covering audio validation, Whisper → GPT-4o mini parsing, `422 CONTENT_BLOCKED`, CRUD, Drafted sync, `401 AUTH_REQUIRED`/`INVALID_AUTH_HEADER`, IDOR cross-user `404`, `429 RATE_LIMITED`, HTTP security headers, and `/auth/verified`).
+  - **Live Render Cloud Probes (`https://drafty-vh1d.onrender.com/`):**
+    - `GET /health` cold start: `HTTP 200` in **`22,674 ms`** (`22.67s`); warm: `HTTP 200` in **`258 ms`** (`0.26s`).
+    - Security headers verified live: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
+    - `GET /auth/verified`: `HTTP 200`, `Cache-Control: no-store`, `1,908 bytes`.
+    - Unauthenticated `GET /api/v1/containers`: `HTTP 401 Unauthorized`.
+  - **Android Client (`Pixel_8 (AVD)` · Android 17 / API 37 · `1080×2400`):**
+    - `:app:testDebugUnitTest`: `BUILD SUCCESSFUL` (`22s`); `:app:connectedDebugAndroidTest`: **1 / 1 passed** (`BUILD SUCCESSFUL` in `49s`).
+    - Installed APK verified: `versionCode=2`, `versionName=2.0`, `ALLOW_BACKUP` absent from `pkgFlags`, `RECORD_AUDIO` granted, cold launch **`5,250 ms`**, and mandatory Onboarding Auth gate verified.
+  - **Companion Drafted (`l4hgs/Drafted`):** Live `POST /api/v1/containers/{id}/schedule-to-drafted` upserts directly into `public.posts` with deterministic 12-digit numeric-string IDs; `flutter test` **17 / 17 passed** in `7s` (including `test/drafty_handoff_test.dart`), `flutter analyze` **0 issues**, and cold launch on Android 17 measured at **`12,312 ms`**.
