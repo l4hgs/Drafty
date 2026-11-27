@@ -362,18 +362,21 @@ async def delete_container(container_id: str) -> ContainerDeleteResponse:
 @app.post(
     "/api/v1/containers/{container_id}/schedule-to-drafted",
     response_model=DraftedSyncResponse,
-    responses={code: {"model": ErrorResponse} for code in (404, 422, 502)},
+    responses={code: {"model": ErrorResponse} for code in (401, 404, 422, 502)},
 )
 async def schedule_to_drafted(
     container_id: str,
     payload: DraftedSyncRequest | None = Body(default=None),
+    auth_user_id: str | None = Depends(get_authenticated_user_id),
 ) -> DraftedSyncResponse:
     try:
         container_id = str(UUID(container_id))
     except ValueError:
         raise api_error(422, "INVALID_CONTAINER_ID", "container_id must be a UUID.")
     try:
-        result = await db_service.sync_to_drafted_workspace(container_id, payload)
+        result = await db_service.sync_to_drafted_workspace(
+            container_id, payload, target_user_id=auth_user_id
+        )
     except db_service.ContainerNotFoundError:
         raise api_error(404, "CONTAINER_NOT_FOUND", "Content container not found.")
     except db_service.DatabaseError:

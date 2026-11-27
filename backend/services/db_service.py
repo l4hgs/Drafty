@@ -268,7 +268,11 @@ def _deterministic_drafted_post_id(container_id: str) -> str:
     return str((UUID(container_id).int % 900_000_000_000) + 100_000_000_000)
 
 
-def _sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | None = None) -> dict:
+def _sync_to_drafted_workspace(
+    container_id: str,
+    updates: DraftedSyncRequest | None = None,
+    target_user_id: str | None = None,
+) -> dict:
     db = _db()
     table = db.table("content_containers")
     found = table.select("*").eq("id", container_id).limit(1).execute()
@@ -276,7 +280,14 @@ def _sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | 
         raise ContainerNotFoundError(container_id)
 
     row = dict(found.data[0])
+    effective_user_id = str(target_user_id or row.get("user_id") or "local_device")
     patch_data: dict = {"is_pushed_to_drafted": True}
+    if target_user_id and str(row.get("user_id")) != target_user_id:
+        # Ensure authenticated user's profile row exists and adopt pre-auth container cleanly
+        db.table("user_profiles").upsert(
+            {"id": target_user_id}, on_conflict="id", ignore_duplicates=True
+        ).execute()
+        patch_data["user_id"] = target_user_id
     title = row.get("title") or "Untitled Draft"
     assets = dict(row.get("assets") or {})
     metadata = dict(row.get("metadata") or {})
@@ -319,7 +330,7 @@ def _sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | 
 
     drafted_post_payload = {
         "id": str(drafted_post_id),
-        "user_id": str(row.get("user_id") or "local_device"),
+        "user_id": effective_user_id,
         "title": title,
         "platform": platforms[0],
         "platforms": platforms,
@@ -431,6 +442,10 @@ async def get_recent_scheduled_dates(user_id: str) -> list[str]:
         return []
 
 
-async def sync_to_drafted_workspace(container_id: str, updates: DraftedSyncRequest | None = None) -> dict:
-    return await _run(_sync_to_drafted_workspace, container_id, updates)
+async def sync_to_drafted_workspace(
+    container_id: str,
+    updates: DraftedSyncRequest | None = None,
+    target_user_id: str | None = None,
+) -> dict:
+    return await _run(_sync_to_drafted_workspace, container_id, updates, target_user_id)
 
