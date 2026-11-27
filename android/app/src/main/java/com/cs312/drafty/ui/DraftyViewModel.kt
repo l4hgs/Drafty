@@ -105,6 +105,10 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             authManager.refreshSessionIfNeeded()
         }
+        // Silent Render warm-up ping on app launch so the backend is awake before the user records.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { api.healthCheck() }
+        }
     }
 
     fun signInWithEmail(
@@ -133,6 +137,12 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
                 saveUserProfile(session.email, brandName.ifBlank { session.displayName }, brandVoice) {}
             }
             onComplete(res)
+        }
+    }
+
+    fun resendSignupEmail(email: String, onComplete: (Result<Unit>) -> Unit) {
+        viewModelScope.launch {
+            onComplete(authManager.resendSignupEmail(email))
         }
     }
 
@@ -519,6 +529,10 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun scheduleToDrafted(containerId: String, selectedHookIndex: Int = 0) {
+        if (authSession.value == null) {
+            _syncState.value = SyncState.Error("Sign in to your Drafted account to schedule ideas.")
+            return
+        }
         if (_syncState.value is SyncState.Syncing) return
         _syncState.value = SyncState.Syncing
         viewModelScope.launch {

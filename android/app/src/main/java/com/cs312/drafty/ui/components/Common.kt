@@ -614,6 +614,46 @@ fun PixelLockIcon(tint: Color = InkBlack, size: Dp = 14.dp, modifier: Modifier =
     )
 }
 
+@Composable
+fun PixelEyeIcon(tint: Color = MutedGray, size: Dp = 18.dp, modifier: Modifier = Modifier) {
+    PixelIconGrid(
+        pattern = listOf(
+            ".........",
+            "..#####..",
+            ".##...##.",
+            "##..#..##",
+            "##.###.##",
+            "##..#..##",
+            ".##...##.",
+            "..#####..",
+            ".........",
+        ),
+        tint = tint,
+        size = size,
+        modifier = modifier,
+    )
+}
+
+@Composable
+fun PixelEyeOffIcon(tint: Color = MutedGray, size: Dp = 18.dp, modifier: Modifier = Modifier) {
+    PixelIconGrid(
+        pattern = listOf(
+            "#........",
+            ".#####...",
+            ".##...##.",
+            "##.#...##",
+            "##..#..##",
+            "##...#.##",
+            ".##...##.",
+            "...#####.",
+            "........#",
+        ),
+        tint = tint,
+        size = size,
+        modifier = modifier,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Phase 1 Shared Micro-Primitives: GlassToast, HapticChoreographer, springPressScale
 // ---------------------------------------------------------------------------

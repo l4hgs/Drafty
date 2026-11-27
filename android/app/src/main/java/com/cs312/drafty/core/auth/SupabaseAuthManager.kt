@@ -15,7 +15,11 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+
+class EmailConfirmationRequiredException(val email: String) :
+    RuntimeException("Please verify $email using the link we sent to your inbox.")
 
 data class AuthSession(
     val userId: String,
@@ -89,6 +93,7 @@ class SupabaseAuthManager(context: Context) {
     ): Result<AuthSession> = withContext(Dispatchers.IO) {
         if (!isConfigured) return@withContext Result.failure(IllegalStateException(NOT_CONFIGURED_MSG))
         try {
+            val encodedRedirect = URLEncoder.encode(EMAIL_CONFIRM_REDIRECT_URI, "UTF-8")
             val body = JSONObject().apply {
                 put("email", email.trim())
                 put("password", password)
@@ -101,15 +106,42 @@ class SupabaseAuthManager(context: Context) {
                 )
             }.toString()
             val req = Request.Builder()
-                .url("${BuildConfig.SUPABASE_URL}/auth/v1/signup")
+                .url("${BuildConfig.SUPABASE_URL}/auth/v1/signup?redirect_to=$encodedRedirect")
                 .addHeader("apikey", BuildConfig.SUPABASE_ANON_KEY)
                 .addHeader("Content-Type", "application/json")
                 .post(body.toRequestBody(jsonType))
                 .build()
-            executeAuthRequest(req)
+            executeAuthRequest(req, requestedEmail = email.trim())
         } catch (e: Exception) {
             Log.e(TAG, "signUpWithEmail failed", e)
             Result.failure(RuntimeException("Couldn't create your account right now. Please try again."))
+        }
+    }
+
+    suspend fun resendSignupEmail(email: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!isConfigured) return@withContext Result.failure(IllegalStateException(NOT_CONFIGURED_MSG))
+        try {
+            val encodedRedirect = URLEncoder.encode(EMAIL_CONFIRM_REDIRECT_URI, "UTF-8")
+            val body = JSONObject().apply {
+                put("type", "signup")
+                put("email", email.trim())
+            }.toString()
+            val req = Request.Builder()
+                .url("${BuildConfig.SUPABASE_URL}/auth/v1/resend?redirect_to=$encodedRedirect")
+                .addHeader("apikey", BuildConfig.SUPABASE_ANON_KEY)
+                .addHeader("Content-Type", "application/json")
+                .post(body.toRequestBody(jsonType))
+                .build()
+            http.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(RuntimeException("Please wait a moment before resending."))
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "resendSignupEmail failed", e)
+            Result.failure(RuntimeException("Couldn't resend email right now."))
         }
     }
 
@@ -212,7 +244,7 @@ class SupabaseAuthManager(context: Context) {
         }
     }
 
-    private fun executeAuthRequest(req: Request): Result<AuthSession> {
+    private fun executeAuthRequest(req: Request, requestedEmail: String = ""): Result<AuthSession> {
         http.newCall(req).execute().use { resp ->
             val raw = resp.body?.string().orEmpty()
             val obj = runCatching { JSONObject(raw) }.getOrNull()
@@ -229,11 +261,10 @@ class SupabaseAuthManager(context: Context) {
             val accessToken = obj.optString("access_token")
             val refreshToken = obj.optString("refresh_token")
             val expiresIn = obj.optLong("expires_in", 3600L)
-            val userObj = obj.optJSONObject("user")
+            val userObj = obj.optJSONObject("user") ?: obj.takeIf { it.has("id") && it.has("email") }
             if (accessToken.isBlank() || userObj == null) {
-                return Result.failure(
-                    RuntimeException("Account created! Check your email to confirm, then sign in."),
-                )
+                val pendingEmail = userObj?.optString("email").orEmpty().ifBlank { requestedEmail }
+                return Result.failure(EmailConfirmationRequiredException(pendingEmail))
             }
             val userId = userObj.optString("id")
             val email = userObj.optString("email")
@@ -305,6 +336,8 @@ class SupabaseAuthManager(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_EXPIRES_AT = "expires_at"
         const val REDIRECT_URI = "drafty://auth-callback"
+        val EMAIL_CONFIRM_REDIRECT_URI: String
+            get() = BuildConfig.API_BASE_URL.trimEnd('/') + "/auth/verified"
         private const val NOT_CONFIGURED_MSG =
             "Supabase Auth isn't configured yet. Add DRAFTY_SUPABASE_URL and DRAFTY_SUPABASE_ANON_KEY to android/local.properties."
 

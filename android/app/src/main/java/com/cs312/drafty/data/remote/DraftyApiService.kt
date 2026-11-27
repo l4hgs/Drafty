@@ -15,6 +15,9 @@ import retrofit2.http.Query
 
 interface DraftyApiService {
 
+    @GET("health")
+    suspend fun healthCheck(): Response<Unit>
+
     @GET("api/v1/containers")
     suspend fun listContainers(
         @Query("user_id") userId: String,

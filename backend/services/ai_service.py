@@ -1,6 +1,7 @@
 """Whisper transcription + GPT-4o mini structured parsing."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta
 
@@ -115,7 +116,6 @@ class AIService:
         brand_voice: str | None = None,
         booked_dates: list[str] | None = None,
     ) -> ParsedContent:
-        await self.check_safety(f"{brand_voice or ''}\n{transcript}")
         today = client_time.strftime("%A, %Y-%m-%d")
         voice_line = f"\nCreator brand voice: {brand_voice.strip()}" if brand_voice and brand_voice.strip() else ""
         booked_line = (
@@ -124,8 +124,11 @@ class AIService:
             else ""
         )
         user_prompt = f"Current date: {today}{voice_line}{booked_line}\n\nTranscript:\n{transcript}"
-        try:
-            completion = await self._client.beta.chat.completions.parse(
+
+        # Run OpenAI Moderation concurrently with GPT-4o mini; cancel/discard if flagged.
+        safety_task = asyncio.create_task(self.check_safety(f"{brand_voice or ''}\n{transcript}"))
+        parse_task = asyncio.create_task(
+            self._client.beta.chat.completions.parse(
                 model=PARSER_MODEL,
                 temperature=0.55,
                 messages=[
@@ -134,6 +137,14 @@ class AIService:
                 ],
                 response_format=ParsedContent,
             )
+        )
+        try:
+            await safety_task
+        except Exception:
+            parse_task.cancel()
+            raise
+        try:
+            completion = await parse_task
         except OpenAIError as exc:
             logger.exception("Parser failure")
             raise ParsingError(str(exc)) from exc

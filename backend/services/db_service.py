@@ -128,6 +128,13 @@ def _update_draft_status(draft_id: str, status: str) -> None:
     _db().table("voice_drafts").update({"status": status}).eq("id", draft_id).execute()
 
 
+def _finalize_voice_draft(draft_id: str, audio_path: str | None) -> None:
+    patch: dict = {"status": "parsed"}
+    if audio_path:
+        patch["audio_storage_path"] = audio_path
+    _db().table("voice_drafts").update(patch).eq("id", draft_id).execute()
+
+
 def _save_content_container(draft_id: str, user_id: str, idea: IdeaContainer) -> str:
     data = idea.model_dump(mode="json")
     res = _db().table("content_containers").insert({
@@ -141,7 +148,6 @@ def _save_content_container(draft_id: str, user_id: str, idea: IdeaContainer) ->
         "creative_direction": data["creative_direction"],
         "schedule": data["schedule"],
     }).execute()
-    _update_draft_status(draft_id, "parsed")
     return res.data[0]["id"]
 
 
@@ -189,9 +195,16 @@ def _list_user_containers(user_id: str) -> list[IdeaContainer]:
     return [_row_to_idea_container(row) for row in (res.data or [])]
 
 
-def _update_content_container(container_id: str, updates: ContainerUpdateRequest) -> IdeaContainer:
+def _update_content_container(
+    container_id: str,
+    updates: ContainerUpdateRequest,
+    owner_user_id: str | None = None,
+) -> IdeaContainer:
     table = _db().table("content_containers")
-    found = table.select("*").eq("id", container_id).limit(1).execute()
+    q = table.select("*").eq("id", container_id)
+    if owner_user_id:
+        q = q.eq("user_id", owner_user_id)
+    found = q.limit(1).execute()
     if not found.data:
         raise ContainerNotFoundError(container_id)
     row = dict(found.data[0])
@@ -207,7 +220,10 @@ def _update_content_container(container_id: str, updates: ContainerUpdateRequest
     if updates.schedule is not None:
         patch_data["schedule"] = updates.schedule.model_dump(mode="json")
     if patch_data:
-        res = table.update(patch_data).eq("id", container_id).execute()
+        uq = table.update(patch_data).eq("id", container_id)
+        if owner_user_id:
+            uq = uq.eq("user_id", owner_user_id)
+        res = uq.execute()
         if res.data:
             row = dict(res.data[0])
         else:
@@ -215,12 +231,18 @@ def _update_content_container(container_id: str, updates: ContainerUpdateRequest
     return _row_to_idea_container(row)
 
 
-def _delete_content_container(container_id: str) -> dict:
+def _delete_content_container(container_id: str, owner_user_id: str | None = None) -> dict:
     table = _db().table("content_containers")
-    found = table.select("id").eq("id", container_id).limit(1).execute()
+    q = table.select("id").eq("id", container_id)
+    if owner_user_id:
+        q = q.eq("user_id", owner_user_id)
+    found = q.limit(1).execute()
     if not found.data:
         raise ContainerNotFoundError(container_id)
-    table.delete().eq("id", container_id).execute()
+    dq = table.delete().eq("id", container_id)
+    if owner_user_id:
+        dq = dq.eq("user_id", owner_user_id)
+    dq.execute()
     return {"container_id": container_id, "deleted": True}
 
 
@@ -283,7 +305,12 @@ def _sync_to_drafted_workspace(
     effective_user_id = str(target_user_id or row.get("user_id") or "local_device")
     patch_data: dict = {"is_pushed_to_drafted": True}
     if target_user_id and str(row.get("user_id")) != target_user_id:
-        # Ensure authenticated user's profile row exists and adopt pre-auth container cleanly
+        # Prevent cross-account hijacking: only adopt containers belonging to an unlinked guest profile
+        old_uid = str(row.get("user_id") or "")
+        if old_uid:
+            old_prof = db.table("user_profiles").select("email").eq("id", old_uid).limit(1).execute()
+            if old_prof.data and old_prof.data[0].get("email"):
+                raise ContainerNotFoundError(container_id)
         db.table("user_profiles").upsert(
             {"id": target_user_id}, on_conflict="id", ignore_duplicates=True
         ).execute()
@@ -408,6 +435,14 @@ async def mark_draft_failed(draft_id: str) -> None:
         logger.warning("Could not mark voice_draft %s as failed", draft_id, exc_info=True)
 
 
+async def finalize_voice_draft(draft_id: str, audio_path: str | None = None) -> None:
+    """Best-effort background update of voice_drafts status='parsed' + audio_storage_path."""
+    try:
+        await _run(_finalize_voice_draft, draft_id, audio_path)
+    except Exception:
+        logger.warning("Could not finalize voice_draft %s", draft_id, exc_info=True)
+
+
 async def save_content_container(draft_id: str, user_id: str, idea_container: IdeaContainer) -> str:
     return await _run(_save_content_container, draft_id, user_id, idea_container)
 
@@ -416,12 +451,19 @@ async def list_user_containers(user_id: str) -> list[IdeaContainer]:
     return await _run(_list_user_containers, user_id)
 
 
-async def update_content_container(container_id: str, updates: ContainerUpdateRequest) -> IdeaContainer:
-    return await _run(_update_content_container, container_id, updates)
+async def update_content_container(
+    container_id: str,
+    updates: ContainerUpdateRequest,
+    owner_user_id: str | None = None,
+) -> IdeaContainer:
+    return await _run(_update_content_container, container_id, updates, owner_user_id)
 
 
-async def delete_content_container(container_id: str) -> dict:
-    return await _run(_delete_content_container, container_id)
+async def delete_content_container(
+    container_id: str,
+    owner_user_id: str | None = None,
+) -> dict:
+    return await _run(_delete_content_container, container_id, owner_user_id)
 
 
 async def upsert_user_profile(req: UserProfileRequest) -> dict:

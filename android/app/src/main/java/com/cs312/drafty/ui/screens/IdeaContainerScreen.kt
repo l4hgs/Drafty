@@ -255,6 +255,8 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
     val haptics = rememberHapticChoreographer()
     val card by remember(id) { vm.observeIdea(id) }.collectAsState(initial = null)
     val sync by vm.syncState.collectAsState()
+    val authSession by vm.authSession.collectAsState()
+    val isSignedIn = authSession != null
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { TabTitles.size })
     var selectedHookIndex by rememberSaveable(id) { mutableIntStateOf(0) }
@@ -655,6 +657,7 @@ fun IdeaContainerScreen(id: String, vm: DraftyViewModel, onBack: () -> Unit) {
 
             Dock(
                 editing = editing,
+                isSignedIn = isSignedIn,
                 synced = synced,
                 syncing = sync is SyncState.Syncing,
                 onEdit = {
@@ -1350,6 +1353,7 @@ private fun InfoTile(
 @Composable
 private fun Dock(
     editing: Boolean,
+    isSignedIn: Boolean,
     synced: Boolean,
     syncing: Boolean,
     onEdit: () -> Unit,
@@ -1397,30 +1401,35 @@ private fun Dock(
                 GlassButton(
                     text = "Edit",
                     onClick = onEdit,
-                    dark = false,
-                    minHeight = 48.dp,
-                    horizontalPadding = 16.dp,
-                    leadingIcon = { PixelEditIcon(tint = InkBlack, size = 14.dp) },
-                )
-                GlassButton(
-                    text = when {
-                        synced -> "Scheduled"
-                        syncing -> "Syncing…"
-                        else -> "Schedule to Drafted"
-                    },
-                    onClick = onSchedule,
-                    modifier = Modifier.weight(1f),
-                    dark = !synced,
-                    enabled = !synced && !syncing,
+                    modifier = if (isSignedIn) Modifier else Modifier.weight(1f),
+                    dark = !isSignedIn,
                     minHeight = 48.dp,
                     horizontalPadding = 16.dp,
                     leadingIcon = {
-                        when {
-                            synced -> PixelCheckIcon(tint = InkBlack, size = 14.dp)
-                            !syncing -> PixelSendIcon(tint = CardSurface, size = 14.dp)
-                        }
+                        PixelEditIcon(tint = if (isSignedIn) InkBlack else CardSurface, size = 14.dp)
                     },
                 )
+                if (isSignedIn) {
+                    GlassButton(
+                        text = when {
+                            synced -> "Scheduled"
+                            syncing -> "Syncing…"
+                            else -> "Schedule to Drafted"
+                        },
+                        onClick = onSchedule,
+                        modifier = Modifier.weight(1f),
+                        dark = !synced,
+                        enabled = !synced && !syncing,
+                        minHeight = 48.dp,
+                        horizontalPadding = 16.dp,
+                        leadingIcon = {
+                            when {
+                                synced -> PixelCheckIcon(tint = InkBlack, size = 14.dp)
+                                !syncing -> PixelSendIcon(tint = CardSurface, size = 14.dp)
+                            }
+                        },
+                    )
+                }
             }
         }
     }
