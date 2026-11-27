@@ -8,7 +8,7 @@
 _Voice-driven AI content structuring assistant for creators — seamlessly synced with [{ Drafted }](https://github.com/l4hgs/Drafted)._
 
 <p>
-  <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v1.0.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v1.0-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
+  <a href="https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.apk"><img src="https://img.shields.io/badge/Download-Android_APK_v2.0-111111?style=flat-square&logo=android&logoColor=white" alt="Download Android APK" /></a>
   <a href="https://drafty-vh1d.onrender.com/health"><img src="https://img.shields.io/badge/API-Live_on_Render-059669?style=flat-square&logo=render&logoColor=white" alt="Live API" /></a>
   <a href="https://github.com/l4hgs/Drafted"><img src="https://img.shields.io/badge/Companion-Drafted_Calendar-111111?style=flat-square&logo=flutter&logoColor=white" alt="Drafted Companion Repo" /></a>
   <img src="https://img.shields.io/badge/Android-Kotlin_&_Compose-111111?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
@@ -23,9 +23,9 @@ _Voice-driven AI content structuring assistant for creators — seamlessly synce
 
 ## `[ 00 ]` Download & Live API
 
-- **Android App (APK):** [**Download `Drafty-v1.0.apk`**](https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v1.0.apk) _(or browse [All Releases](https://github.com/l4hgs/Drafty/releases/latest))_
+- **Android App (APK):** [**Download `Drafty-v2.0.apk`**](https://github.com/l4hgs/Drafty/releases/latest/download/Drafty-v2.0.apk) _(or browse [All Releases](https://github.com/l4hgs/Drafty/releases/latest))_
   1. Tap the download link on your Android phone (Android 7.0+ / API 24+).
-  2. Open `Drafty-v1.0.apk` and allow **Install unknown apps** for your browser if prompted.
+  2. Open `Drafty-v2.0.apk` and allow **Install unknown apps** for your browser if prompted.
   3. Complete the 5-step onboarding (sign in with **Google** or **Email + Password**, personalize your creator voice, grant Microphone permission), and hold Drafty to start drafting!
 - **Companion Calendar App:** [**`l4hgs/Drafted`**](https://github.com/l4hgs/Drafted) — sign in with the exact same account to manage your scheduled posts on a full editorial calendar, production checklists, and publish bridge.
 - **Live Cloud API:** `https://drafty-vh1d.onrender.com/`
