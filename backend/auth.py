@@ -15,7 +15,7 @@ logger = logging.getLogger("drafty.auth")
 
 # Tiny in-memory TTL cache: token -> (user_id, expires_at_monotonic)
 _TOKEN_CACHE: dict[str, tuple[str, float]] = {}
-_CACHE_TTL_SECONDS = 120.0
+_CACHE_TTL_SECONDS = 300.0
 
 
 def _verify_token_sync(token: str) -> str:

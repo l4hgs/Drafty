@@ -74,17 +74,30 @@ class AIService:
         self._client = AsyncOpenAI(api_key=resolved_key, timeout=20.0, max_retries=1)
 
     async def transcribe(self, audio: bytes, filename: str, content_type: str) -> str:
+        model = settings.WHISPER_MODEL
         try:
             result = await self._client.audio.transcriptions.create(
-                model=WHISPER_MODEL,
+                model=model,
                 file=(filename, audio, content_type),
                 response_format="text",
             )
         except OpenAIError as exc:
-            logger.exception("Whisper failure")
-            raise TranscriptionError(str(exc)) from exc
+            if model != "whisper-1":
+                logger.warning("ASR model %s failed (%s); falling back to whisper-1", model, exc)
+                try:
+                    result = await self._client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=(filename, audio, content_type),
+                        response_format="text",
+                    )
+                except OpenAIError as fallback_exc:
+                    logger.exception("Whisper fallback failure")
+                    raise TranscriptionError(str(fallback_exc)) from fallback_exc
+            else:
+                logger.exception("Whisper failure")
+                raise TranscriptionError(str(exc)) from exc
         text = (result if isinstance(result, str) else getattr(result, "text", "")).strip()
-        logger.info("Whisper transcript (%d chars): %r", len(text), text)
+        logger.info("ASR (%s) transcript (%d chars): %r", model, len(text), text)
         if len(text) < MIN_TRANSCRIPT_CHARS:
             raise EmptyTranscriptError(
                 "We couldn't hear any speech. Hold Drafty and speak clearly into your mic."

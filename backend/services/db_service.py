@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from functools import lru_cache
 from uuid import UUID, uuid4
@@ -20,6 +21,18 @@ from models import (
 logger = logging.getLogger("drafty.db")
 
 AUDIO_BUCKET = settings.SUPABASE_AUDIO_BUCKET
+
+# Lightweight in-memory caches to avoid redundant Supabase round trips on consecutive drafts.
+_KNOWN_PROFILE_IDS: set[str] = set()
+_BRAND_VOICE_CACHE: dict[str, tuple[str | None, float]] = {}
+_BOOKED_DATES_CACHE: dict[str, tuple[list[str], float]] = {}
+_READ_CACHE_TTL_SECONDS = 60.0
+
+
+def _invalidate_user_read_caches(user_id: str | None) -> None:
+    if user_id:
+        _BRAND_VOICE_CACHE.pop(user_id, None)
+        _BOOKED_DATES_CACHE.pop(user_id, None)
 
 
 class ContainerNotFoundError(Exception):
@@ -89,6 +102,8 @@ def _upsert_user_profile(req: UserProfileRequest) -> dict:
         }
         res = db.table("user_profiles").upsert(fallback_payload, on_conflict="id").execute()
         row = res.data[0] if res.data else fallback_payload
+    _KNOWN_PROFILE_IDS.add(uid)
+    _BRAND_VOICE_CACHE.pop(uid, None)
     return {
         "id": uid,
         "email": row.get("email") or email,
@@ -98,13 +113,23 @@ def _upsert_user_profile(req: UserProfileRequest) -> dict:
 
 
 def _get_brand_voice(user_id: str) -> str | None:
+    now = time.monotonic()
+    cached = _BRAND_VOICE_CACHE.get(user_id)
+    if cached and cached[1] > now:
+        return cached[0]
     try:
         res = _db().table("user_profiles").select("brand_name, brand_voice_prompt").eq("id", user_id).limit(1).execute()
         if not res.data:
+            _BRAND_VOICE_CACHE[user_id] = (None, now + _READ_CACHE_TTL_SECONDS)
             return None
+        _KNOWN_PROFILE_IDS.add(user_id)
         row = res.data[0]
         parts = [str(p).strip() for p in (row.get("brand_name"), row.get("brand_voice_prompt")) if p and str(p).strip()]
-        return " — ".join(parts) if parts else None
+        voice = " — ".join(parts) if parts else None
+        if len(_BRAND_VOICE_CACHE) > 256:
+            _BRAND_VOICE_CACHE.clear()
+        _BRAND_VOICE_CACHE[user_id] = (voice, now + _READ_CACHE_TTL_SECONDS)
+        return voice
     except Exception:
         return None
 
@@ -112,8 +137,10 @@ def _get_brand_voice(user_id: str) -> str | None:
 def _save_voice_draft(user_id: str, raw_transcript: str, audio_path: str | None,
                       duration_seconds: int | None) -> str:
     db = _db()
-    # Ensure the profile exists so the FK holds for first-time users.
-    db.table("user_profiles").upsert({"id": user_id}, on_conflict="id", ignore_duplicates=True).execute()
+    # Skip redundant user_profiles upsert if we already verified this profile exists in-process.
+    if user_id not in _KNOWN_PROFILE_IDS:
+        db.table("user_profiles").upsert({"id": user_id}, on_conflict="id", ignore_duplicates=True).execute()
+        _KNOWN_PROFILE_IDS.add(user_id)
     res = db.table("voice_drafts").insert({
         "user_id": user_id,
         "raw_transcript": raw_transcript,
@@ -148,6 +175,7 @@ def _save_content_container(draft_id: str, user_id: str, idea: IdeaContainer) ->
         "creative_direction": data["creative_direction"],
         "schedule": data["schedule"],
     }).execute()
+    _BOOKED_DATES_CACHE.pop(user_id, None)
     return res.data[0]["id"]
 
 
@@ -165,6 +193,10 @@ def _row_to_idea_container(row: dict) -> IdeaContainer:
 
 
 def _get_recent_scheduled_dates(user_id: str) -> list[str]:
+    now = time.monotonic()
+    cached = _BOOKED_DATES_CACHE.get(user_id)
+    if cached and cached[1] > now:
+        return list(cached[0])
     res = (
         _db()
         .table("content_containers")
@@ -180,7 +212,11 @@ def _get_recent_scheduled_dates(user_id: str) -> list[str]:
         d = sched.get("recommended_date")
         if isinstance(d, str) and d.strip():
             dates.add(d.strip())
-    return sorted(dates)
+    result = sorted(dates)
+    if len(_BOOKED_DATES_CACHE) > 256:
+        _BOOKED_DATES_CACHE.clear()
+    _BOOKED_DATES_CACHE[user_id] = (result, now + _READ_CACHE_TTL_SECONDS)
+    return list(result)
 
 
 def _list_user_containers(user_id: str) -> list[IdeaContainer]:

@@ -280,6 +280,7 @@ async def transcribe_and_parse(
     ai: AIService = app.state.ai
 
     # 1) Transcribe + upload raw audio + fetch brand voice & existing scheduled dates concurrently
+    t_asr_start = time.perf_counter()
     storage_task = asyncio.create_task(
         db_service.upload_audio_to_storage(user_id, audio, ext, content_type, strict=False)
     )
@@ -297,10 +298,12 @@ async def transcribe_and_parse(
         brand_voice_task.cancel()
         booked_dates_task.cancel()
         raise api_error(502, "ASR_FAILED", "Transcription service failed.")
+    asr_elapsed = time.perf_counter() - t_asr_start
     # Do not block GPT parsing on audio archival upload; storage_task finishes in background.
     brand_voice, booked_dates = await asyncio.gather(brand_voice_task, booked_dates_task)
 
     # 2) Persist the draft (pending) AND run GPT-4o mini structured parse concurrently
+    t_parse_start = time.perf_counter()
     draft_task = asyncio.create_task(
         db_service.save_voice_draft(
             user_id,
@@ -323,8 +326,11 @@ async def transcribe_and_parse(
 
     try:
         parsed = await parse_task
+        parse_elapsed = time.perf_counter() - t_parse_start
+        t_db_start = time.perf_counter()
         container = IdeaContainer(**parsed.model_dump(), draft_id=UUID(draft_id))
         await db_service.save_content_container(draft_id, user_id, container)
+        db_elapsed = time.perf_counter() - t_db_start
     except ContentSafetyError as exc:
         storage_task.cancel()
         try:
@@ -368,7 +374,17 @@ async def transcribe_and_parse(
 
     elapsed = time.perf_counter() - started
     response.headers["X-Process-Time-Seconds"] = f"{elapsed:.3f}"
-    logger.info("user=%s processed in %.2fs", user_id, elapsed)
+    response.headers["X-ASR-Time-Seconds"] = f"{asr_elapsed:.3f}"
+    response.headers["X-Parse-Time-Seconds"] = f"{parse_elapsed:.3f}"
+    response.headers["X-DB-Time-Seconds"] = f"{db_elapsed:.3f}"
+    logger.info(
+        "user=%s processed in %.2fs (asr=%.2fs parse=%.2fs db=%.2fs)",
+        user_id,
+        elapsed,
+        asr_elapsed,
+        parse_elapsed,
+        db_elapsed,
+    )
     return container
 
 

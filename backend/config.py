@@ -19,7 +19,7 @@ class Settings:
 
     @property
     def WHISPER_MODEL(self) -> str:
-        return os.getenv("WHISPER_MODEL", "whisper-1")
+        return os.getenv("WHISPER_MODEL", "gpt-4o-mini-transcribe")
 
     @property
     def PARSER_MODEL(self) -> str:

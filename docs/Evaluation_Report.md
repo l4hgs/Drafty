@@ -79,13 +79,20 @@ Simulated mid-upload link drops triggered while transmitting `.m4a` voice memos.
 
 Following the Week 3 baseline evaluation, **Drafty v2.0** introduced pipeline latency improvements, full authentication/security hardening, and live integration with the companion **Drafted** Flutter app (`https://github.com/l4hgs/Drafted`):
 
-- **Pipeline Latency Optimizations:** OpenAI `omni-moderation-latest` now executes concurrently alongside `gpt-4o-mini` Structured Outputs, audio archival upload runs non-blocking, `voice_drafts` finalization executes in the background, and a silent `/health` warm-up ping on Android app launch mitigates Render free-tier cold starts (paired with a `6000ms` UI reassurance prompt when warming up).
+- **Pipeline Latency Optimizations (Zero-Quality-Loss):**
+  - Default ASR upgraded from `whisper-1` to **`gpt-4o-mini-transcribe`** (faster turnaround and improved mobile-mic/accent accuracy) with automatic fallback to `whisper-1`.
+  - OpenAI `omni-moderation-latest` executes concurrently alongside `gpt-4o-mini` Structured Outputs; audio archival upload runs non-blocking; `voice_drafts` finalization executes in the background.
+  - Added in-memory TTL caches for Supabase Auth JWT verification (`300s`), `user_profiles` existence (`_KNOWN_PROFILE_IDS`), `brand_voice` (`60s`), and `booked_dates` (`60s`, invalidated on writes) to eliminate redundant Supabase HTTPS round trips on consecutive drafts.
+  - Added per-stage latency telemetry headers (`X-ASR-Time-Seconds`, `X-Parse-Time-Seconds`, `X-DB-Time-Seconds`, `X-Process-Time-Seconds`) and a silent `/health` warm-up ping on Android launch (paired with a `6000ms` UI reassurance prompt during Render cold starts).
+- **Live Device vs. Simulated Latency Observation:**
+  - While the Week 3 simulated benchmark (`benchmark_week3.py`) averaged **`3.25s`**, real-world end-to-end runs on the Android emulator and physical Android device against the live Render free-tier deployment + OpenAI + Supabase from the Philippines typically complete in **`~8–15 seconds`** warm (longer if Render is waking from a 15-minute idle spin-down, measured at `22.67s` on `/health`).
+  - The real-world gap is driven by: (1) sequential two-stage cloud inference (ASR ~1.5–3.5s followed by ~300–500 output-token GPT-4o mini Structured Outputs ~4.0–7.0s), (2) cross-region PH → Render → OpenAI/Supabase HTTPS round trips (~1.3–3.0s), and (3) Render free-tier shared 0.1 CPU overhead. Output richness (3 hooks, full caption, 3–6 shots, conflict-free schedule) was intentionally preserved rather than truncated.
 - **Security Hardening Verified:**
   - Strict Supabase RLS (`003_harden_rls_auth_only.sql`) removes anonymous fallback policies so all Drafty and Drafted tables require `auth.uid()::text = user_id`.
   - FastAPI enforces Bearer JWT verification (`backend/auth.py`), per-user ownership checks (IDOR protection), sliding-window AI rate limiting (`15 req / 5 min` → `429`), and HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on `/auth/*`).
   - Android stores session tokens in **AndroidKeyStore AES-256-GCM**, disables `allowBackup`, enforces HTTPS-only `network_security_config.xml` (cleartext limited to local debug hosts), restricts HTTP body logging to debug builds, and wipes Room + cached `.m4a` files on Sign Out.
 - **Cross-App Sync, Live Cloud Probes & Automated Verification (Executed November 27, 2026):**
-  - **Backend API & Security Suite (`backend/tests/test_voice_api.py`):** **20 / 20 passed** in `0.374s` (covering audio validation, Whisper → GPT-4o mini parsing, `422 CONTENT_BLOCKED`, CRUD, Drafted sync, `401 AUTH_REQUIRED`/`INVALID_AUTH_HEADER`, IDOR cross-user `404`, `429 RATE_LIMITED`, HTTP security headers, and `/auth/verified`).
+  - **Backend API & Security Suite (`backend/tests/test_voice_api.py`):** **20 / 20 passed** in `0.372s` (covering audio validation, ASR → GPT-4o mini parsing, `422 CONTENT_BLOCKED`, CRUD, Drafted sync, `401 AUTH_REQUIRED`/`INVALID_AUTH_HEADER`, IDOR cross-user `404`, `429 RATE_LIMITED`, HTTP security headers, `/auth/verified`, and per-stage timing headers).
   - **Live Render Cloud Probes (`https://drafty-vh1d.onrender.com/`):**
     - `GET /health` cold start: `HTTP 200` in **`22,674 ms`** (`22.67s`); warm: `HTTP 200` in **`258 ms`** (`0.26s`).
     - Security headers verified live: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
