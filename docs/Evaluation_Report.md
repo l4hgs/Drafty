@@ -84,9 +84,19 @@ Following the Week 3 baseline evaluation, **Drafty v2.0** introduced pipeline la
   - OpenAI `omni-moderation-latest` executes concurrently alongside `gpt-4o-mini` Structured Outputs; audio archival upload runs non-blocking; `voice_drafts` finalization executes in the background.
   - Added in-memory TTL caches for Supabase Auth JWT verification (`300s`), `user_profiles` existence (`_KNOWN_PROFILE_IDS`), `brand_voice` (`60s`), and `booked_dates` (`60s`, invalidated on writes) to eliminate redundant Supabase HTTPS round trips on consecutive drafts.
   - Added per-stage latency telemetry headers (`X-ASR-Time-Seconds`, `X-Parse-Time-Seconds`, `X-DB-Time-Seconds`, `X-Process-Time-Seconds`) and a silent `/health` warm-up ping on Android launch (paired with a `6000ms` UI reassurance prompt during Render cold starts).
-- **Live Device vs. Simulated Latency Observation:**
-  - While the Week 3 simulated benchmark (`benchmark_week3.py`) averaged **`3.25s`**, real-world end-to-end runs on the Android emulator and physical Android device against the live Render free-tier deployment + OpenAI + Supabase from the Philippines typically complete in **`~8–15 seconds`** warm (longer if Render is waking from a 15-minute idle spin-down, measured at `22.67s` on `/health`).
-  - The real-world gap is driven by: (1) sequential two-stage cloud inference (ASR ~1.5–3.5s followed by ~300–500 output-token GPT-4o mini Structured Outputs ~4.0–7.0s), (2) cross-region PH → Render → OpenAI/Supabase HTTPS round trips (~1.3–3.0s), and (3) Render free-tier shared 0.1 CPU overhead. Output richness (3 hooks, full caption, 3–6 shots, conflict-free schedule) was intentionally preserved rather than truncated.
+- **Live Device vs. Simulated Latency Observation (6 Real Trials — `adb logcat` OkHttp Timing):**
+  - While the Week 3 simulated benchmark (`benchmark_week3.py`) averaged **`3.25s`**, 6 live end-to-end `POST /api/v1/voice/transcribe-and-parse` runs recorded from `Pixel_8 (AVD)` against the live Render free-tier deployment + OpenAI + Supabase from the Philippines averaged **`13.31s`** (`9.66s` – `17.98s`, **6 / 6 `HTTP 200`**, all `< 20s`):
+
+  | Live Run | Audio Payload | HTTP Status | Measured Round-Trip (OkHttp) |
+  | :---: | :---: | :---: | :---: |
+  | 1 | 99 KB | `200 OK` | `17.98 s` (`17,976 ms`) |
+  | 2 | 101 KB | `200 OK` | `10.63 s` (`10,628 ms`) |
+  | 3 | 97 KB | `200 OK` | `9.66 s` (`9,662 ms`) |
+  | 4 | 119 KB | `200 OK` | `12.54 s` (`12,540 ms`) |
+  | 5 | 140 KB | `200 OK` | `16.63 s` (`16,629 ms`) |
+  | 6 *(post-optimization)* | 128 KB | `200 OK` | **`12.40 s`** (`12,401 ms`) |
+
+  - The gap vs. the simulated `< 5.0s` target is driven by: (1) sequential two-stage cloud inference (ASR ~2.0–3.5s followed by ~400–500 output-token GPT-4o mini Structured Outputs ~5.0–8.0s), (2) cross-region PH → Render → OpenAI/Supabase HTTPS round trips (~1.5–2.5s), and (3) Render free-tier shared 0.1 CPU overhead (plus `22.67s` cold-start spin-up after 15 min idle). Output richness (3 hooks, full caption, 3–6 shots, conflict-free schedule) was intentionally preserved rather than truncated.
 - **Security Hardening Verified:**
   - Strict Supabase RLS (`003_harden_rls_auth_only.sql`) removes anonymous fallback policies so all Drafty and Drafted tables require `auth.uid()::text = user_id`.
   - FastAPI enforces Bearer JWT verification (`backend/auth.py`), per-user ownership checks (IDOR protection), sliding-window AI rate limiting (`15 req / 5 min` → `429`), and HTTP security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on `/auth/*`).
