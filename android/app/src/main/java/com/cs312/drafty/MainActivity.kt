@@ -6,6 +6,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -70,12 +73,16 @@ fun DraftyNavHost(
     val navController = rememberNavController()
     val vm: DraftyViewModel = viewModel() // activity-scoped; shared by all screens
     val authCallback by pendingAuthUri.collectAsState()
+    val authSession by vm.authSession.collectAsState()
 
     LaunchedEffect(authCallback) {
         val uri = authCallback ?: return@LaunchedEffect
         onConsumeAuthUri()
         vm.handleOAuthCallback(uri) { res ->
-            if (res.isSuccess) {
+            val currentRoute = navController.currentBackStackEntry?.destination?.route
+            // If currently on Onboarding, let OnboardingScreen smoothly advance to Page 5 (Voice Setup)
+            // instead of abruptly hard-cutting to Home.
+            if (res.isSuccess && currentRoute != Routes.ONBOARDING) {
                 navController.navigate(Routes.HOME) {
                     popUpTo(Routes.ONBOARDING) { inclusive = true }
                     launchSingleTop = true
@@ -84,11 +91,29 @@ fun DraftyNavHost(
         }
     }
 
+    // Redirect back to Onboarding immediately if the user signs out
+    LaunchedEffect(authSession) {
+        val currentRoute = navController.currentBackStackEntry?.destination?.route
+        if (authSession == null && currentRoute != null && currentRoute != Routes.ONBOARDING) {
+            navController.navigate(Routes.ONBOARDING) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     val startDestination = remember {
         if (vm.hasCompletedOnboarding) Routes.HOME else Routes.ONBOARDING
     }
 
-    NavHost(navController, startDestination = startDestination) {
+    NavHost(
+        navController = navController,
+        startDestination = startDestination,
+        enterTransition = { fadeIn(animationSpec = tween(280)) },
+        exitTransition = { fadeOut(animationSpec = tween(220)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(260)) },
+        popExitTransition = { fadeOut(animationSpec = tween(200)) },
+    ) {
         composable(Routes.ONBOARDING) {
             OnboardingScreen(
                 vm = vm,

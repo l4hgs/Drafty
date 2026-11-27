@@ -171,7 +171,9 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
             .remove("brand_voice_prompt")
             .apply()
         _userProfile.value = UserProfileState(userId = guestId)
+        val queueDir = File(getApplication<Application>().filesDir, "voice_queue")
         viewModelScope.launch(Dispatchers.IO) {
+            offlineQueue.clearAll(queueDir)
             dao.clearAllContainers()
         }
     }
@@ -216,7 +218,7 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val hasCompletedOnboarding: Boolean
-        get() = prefs.getBoolean("onboarding_completed", false) || _userProfile.value.isSignedIn
+        get() = authManager.session.value != null
 
     fun completeOnboarding() {
         prefs.edit().putBoolean("onboarding_completed", true).apply()

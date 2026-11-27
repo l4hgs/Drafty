@@ -792,68 +792,16 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
     }
 
     val authSession by vm.authSession.collectAsState()
-    var pendingVerifyEmail by rememberSaveable { mutableStateOf<String?>(null) }
-    var pendingVerifyPassword by remember { mutableStateOf("") }
-    var checkingVerify by remember { mutableStateOf(false) }
-    var resendingEmail by remember { mutableStateOf(false) }
-
-    LaunchedEffect(authSession) {
-        if (authSession != null && pendingVerifyEmail != null) {
-            pendingVerifyEmail = null
-            pendingVerifyPassword = ""
-            showProfileSheet = false
-        }
-    }
 
     if (showProfileSheet) {
         CreatorProfileSheet(
             profile = profile,
             authSession = authSession,
-            authConfigured = vm.isSupabaseAuthConfigured,
             onDismiss = { showProfileSheet = false },
-            onSignInWithEmail = { email, password, onDone ->
-                vm.signInWithEmail(email, password) { res ->
-                    onDone()
-                    res.onSuccess {
-                        haptics.onSuccess()
-                        toastState.show("Signed in to your Drafted account!")
-                        showProfileSheet = false
-                    }.onFailure { err ->
-                        toastState.show(err.message ?: "Couldn't sign in.")
-                    }
-                }
-            },
-            onSignUpWithEmail = { email, password, brandName, brandVoice, onDone ->
-                vm.signUpWithEmail(email, password, brandName, brandVoice) { res ->
-                    onDone()
-                    res.onSuccess {
-                        haptics.onSuccess()
-                        toastState.show("Account created & synced with Drafted!")
-                        showProfileSheet = false
-                    }.onFailure { err ->
-                        if (err is EmailConfirmationRequiredException) {
-                            pendingVerifyEmail = err.email.ifBlank { email.trim() }
-                            pendingVerifyPassword = password
-                            showProfileSheet = false
-                        } else {
-                            toastState.show(err.message ?: "Couldn't create account.")
-                        }
-                    }
-                }
-            },
-            onContinueWithGoogle = {
-                if (!vm.isSupabaseAuthConfigured) {
-                    toastState.show("Add DRAFTY_SUPABASE_URL & ANON_KEY to local.properties first.")
-                } else {
-                    val uri = vm.authManager.buildGoogleOAuthUri()
-                    ctx.startActivity(Intent(Intent.ACTION_VIEW, uri))
-                }
-            },
             onSignOut = {
+                showProfileSheet = false
                 vm.signOut()
                 haptics.onPressDown()
-                toastState.show("Signed out.")
-                showProfileSheet = false
             },
             onSave = { email, brandName, brandVoice ->
                 vm.saveUserProfile(email, brandName, brandVoice) { res ->
@@ -865,43 +813,6 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                         toastState.show(err.message ?: "Couldn't save your profile right now.")
                     }
                 }
-            },
-        )
-    }
-
-    pendingVerifyEmail?.let { targetEmail ->
-        EmailVerificationWaitingModal(
-            email = targetEmail,
-            checking = checkingVerify,
-            resending = resendingEmail,
-            onCheckVerified = {
-                checkingVerify = true
-                vm.signInWithEmail(targetEmail, pendingVerifyPassword) { res ->
-                    checkingVerify = false
-                    res.onSuccess {
-                        pendingVerifyEmail = null
-                        pendingVerifyPassword = ""
-                        haptics.onSuccess()
-                        toastState.show("Email verified & connected to Drafted!")
-                    }.onFailure {
-                        toastState.show("Not verified yet — tap the link in your inbox first.")
-                    }
-                }
-            },
-            onResend = {
-                resendingEmail = true
-                vm.resendSignupEmail(targetEmail) { res ->
-                    resendingEmail = false
-                    res.onSuccess {
-                        toastState.show("Verification email resent!")
-                    }.onFailure { err ->
-                        toastState.show(err.message ?: "Couldn't resend email right now.")
-                    }
-                }
-            },
-            onDismiss = {
-                pendingVerifyEmail = null
-                pendingVerifyPassword = ""
             },
         )
     }
@@ -1445,18 +1356,12 @@ private fun RecentIdeasSheet(
 private fun CreatorProfileSheet(
     profile: UserProfileState,
     authSession: AuthSession?,
-    authConfigured: Boolean,
     onDismiss: () -> Unit,
-    onSignInWithEmail: (email: String, password: String, onDone: () -> Unit) -> Unit,
-    onSignUpWithEmail: (email: String, password: String, brandName: String, brandVoice: String, onDone: () -> Unit) -> Unit,
-    onContinueWithGoogle: () -> Unit,
     onSignOut: () -> Unit,
     onSave: (email: String, brandName: String, brandVoice: String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var email by remember(profile, authSession) { mutableStateOf(authSession?.email?.ifBlank { null } ?: profile.email) }
-    var password by remember { mutableStateOf("") }
-    var isSignUpMode by remember { mutableStateOf(false) }
+    val accountEmail = authSession?.email?.ifBlank { null } ?: profile.email
     var brandName by remember(profile) { mutableStateOf(profile.brandName) }
     var brandVoice by remember(profile) { mutableStateOf(profile.brandVoicePrompt) }
     var busy by remember { mutableStateOf(false) }
@@ -1482,201 +1387,68 @@ private fun CreatorProfileSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (authSession != null) "Drafted Account" else "Sign In · Drafty & Drafted",
+                    text = "Drafted Account",
                     style = MaterialTheme.typography.headlineSmall,
                     color = InkBlack,
                 )
-                if (authSession != null) {
-                    SoftChip(
-                        text = "Connected",
-                        fillColor = Color(0xFFEAF7EE),
-                        textColor = Color(0xFF157A42),
-                        dotColor = StatusGreen,
-                    )
-                }
+                SoftChip(
+                    text = "Connected",
+                    fillColor = Color(0xFFEAF7EE),
+                    textColor = Color(0xFF157A42),
+                    dotColor = StatusGreen,
+                )
             }
 
-            if (authSession == null) {
-                Text(
-                    "Use one account across Drafty and Drafted so your scheduled drafts sync automatically.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedGray,
-                )
-
-                // Segmented Sign In / Create Account toggle
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(50))
-                        .background(SoftWell)
-                        .padding(4.dp),
-                ) {
-                    listOf(false to "Sign In", true to "Create Account").forEach { (signUp, label) ->
-                        val active = isSignUpMode == signUp
-                        Surface(
-                            onClick = { isSignUpMode = signUp },
-                            shape = RoundedCornerShape(50),
-                            color = if (active) InkBlack else Color.Transparent,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (active) CardSurface else MutedGray,
-                                )
-                            }
-                        }
-                    }
-                }
-
+            Text(
+                "Signed in as $accountEmail. Your scheduled ideas sync directly to Drafted.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedGray,
+            )
+            OutlinedTextField(
+                value = brandName,
+                onValueChange = { brandName = it },
+                label = { Text("Brand / Creator Name") },
+                placeholder = { Text("e.g. Alex Creates") },
+                singleLine = true,
+                shape = InnerTileShape,
+                modifier = Modifier.fillMaxWidth(),
+                colors = softFieldColors(),
+            )
+            OutlinedTextField(
+                value = brandVoice,
+                onValueChange = { brandVoice = it },
+                label = { Text("Brand Voice Prompt (optional)") },
+                placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
+                minLines = 2,
+                shape = InnerTileShape,
+                modifier = Modifier.fillMaxWidth(),
+                colors = softFieldColors(),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 GlassButton(
-                    text = "Continue with Google",
+                    text = "Sign Out",
                     dark = false,
-                    enabled = !busy,
-                    onClick = onContinueWithGoogle,
-                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onSignOut,
+                    modifier = Modifier.weight(0.42f),
                 )
-
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email address") },
-                    placeholder = { Text("creator@drafty.app") },
-                    singleLine = true,
-                    shape = InnerTileShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = softFieldColors(),
-                )
-                var passwordVisible by remember { mutableStateOf(false) }
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    placeholder = { Text("At least 6 characters") },
-                    singleLine = true,
-                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        Surface(
-                            onClick = { passwordVisible = !passwordVisible },
-                            shape = CircleShape,
-                            color = Color.Transparent,
-                        ) {
-                            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                                if (passwordVisible) {
-                                    PixelEyeOffIcon(tint = InkBlack, size = 18.dp)
-                                } else {
-                                    PixelEyeIcon(tint = MutedGray, size = 18.dp)
-                                }
-                            }
-                        }
-                    },
-                    shape = InnerTileShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = softFieldColors(),
-                )
-                if (isSignUpMode) {
-                    OutlinedTextField(
-                        value = brandName,
-                        onValueChange = { brandName = it },
-                        label = { Text("Brand / Creator Name") },
-                        placeholder = { Text("e.g. Alex Creates") },
-                        singleLine = true,
-                        shape = InnerTileShape,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = softFieldColors(),
-                    )
-                    OutlinedTextField(
-                        value = brandVoice,
-                        onValueChange = { brandVoice = it },
-                        label = { Text("Brand Voice (optional)") },
-                        placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
-                        minLines = 2,
-                        shape = InnerTileShape,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = softFieldColors(),
-                    )
-                }
-
                 GlassButton(
-                    text = when {
-                        busy -> "Please wait…"
-                        isSignUpMode -> "Create Unified Account"
-                        else -> "Sign In"
-                    },
+                    text = if (busy) "Saving…" else "Save Profile",
                     dark = true,
-                    enabled = !busy && email.isNotBlank() && password.length >= 6 && (!isSignUpMode || brandName.isNotBlank()),
+                    enabled = !busy && brandName.isNotBlank(),
                     onClick = {
                         busy = true
-                        if (isSignUpMode) {
-                            onSignUpWithEmail(email, password, brandName, brandVoice) { busy = false }
-                        } else {
-                            onSignInWithEmail(email, password) { busy = false }
-                        }
+                        onSave(accountEmail, brandName, brandVoice)
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = if (!busy) {
+                        { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
+                    } else null,
+                    modifier = Modifier.weight(0.58f),
                 )
-
-                if (!authConfigured) {
-                    Text(
-                        text = "Tip: Add DRAFTY_SUPABASE_URL and DRAFTY_SUPABASE_ANON_KEY to android/local.properties to enable Supabase Auth.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MutedGray,
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-            } else {
-                Text(
-                    "Signed in as ${authSession.email}. Your scheduled ideas sync directly to Drafted.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MutedGray,
-                )
-                OutlinedTextField(
-                    value = brandName,
-                    onValueChange = { brandName = it },
-                    label = { Text("Brand / Creator Name") },
-                    placeholder = { Text("e.g. Alex Creates") },
-                    singleLine = true,
-                    shape = InnerTileShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = softFieldColors(),
-                )
-                OutlinedTextField(
-                    value = brandVoice,
-                    onValueChange = { brandVoice = it },
-                    label = { Text("Brand Voice Prompt (optional)") },
-                    placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
-                    minLines = 2,
-                    shape = InnerTileShape,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = softFieldColors(),
-                )
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    GlassButton(
-                        text = "Sign Out",
-                        dark = false,
-                        onClick = onSignOut,
-                        modifier = Modifier.weight(0.42f),
-                    )
-                    GlassButton(
-                        text = if (busy) "Saving…" else "Save Profile",
-                        dark = true,
-                        enabled = !busy && brandName.isNotBlank(),
-                        onClick = {
-                            busy = true
-                            onSave(authSession.email.ifBlank { email }, brandName, brandVoice)
-                        },
-                        leadingIcon = if (!busy) {
-                            { PixelCheckIcon(tint = CardSurface, size = 14.dp) }
-                        } else null,
-                        modifier = Modifier.weight(0.58f),
-                    )
-                }
             }
         }
     }

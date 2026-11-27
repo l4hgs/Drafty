@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
@@ -72,6 +73,46 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---- Security headers middleware + in-memory AI rate limiter ---------------
+_AI_RATE_WINDOW_SECONDS = 300.0
+_AI_RATE_MAX_REQUESTS = 15
+_AI_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _enforce_ai_rate_limit(request: Request, user_id: str | None) -> None:
+    """Sliding-window rate limit (15 AI calls / 5 min per user or IP) to protect OpenAI quota."""
+    client_ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    key = f"u:{user_id}" if user_id else f"ip:{client_ip}"
+    now = time.monotonic()
+    bucket = _AI_RATE_BUCKETS[key]
+    cutoff = now - _AI_RATE_WINDOW_SECONDS
+    while bucket and bucket[0] < cutoff:
+        bucket.popleft()
+    if len(bucket) >= _AI_RATE_MAX_REQUESTS:
+        retry_after = max(1, int(bucket[0] + _AI_RATE_WINDOW_SECONDS - now))
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "detail": "You're drafting super fast! Please wait a moment and try again.",
+                "code": "RATE_LIMITED",
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+    bucket.append(now)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/auth/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ---- Flat error format: {"detail": "...", "code": "..."} -------------------
@@ -208,6 +249,7 @@ async def upload_voice_audio(
     responses={code: {"model": ErrorResponse} for code in (401, 413, 415, 422, 502)},
 )
 async def transcribe_and_parse(
+    request: Request,
     response: Response,
     file: UploadFile = File(...),
     user_id: str = Form(...),
@@ -217,6 +259,7 @@ async def transcribe_and_parse(
 ) -> IdeaContainer:
     started = time.perf_counter()
     user_id = auth_user_id or user_id
+    _enforce_ai_rate_limit(request, user_id)
 
     audio, ext, content_type = await _validate_audio_upload(file, user_id)
     valid_duration = duration_seconds if (duration_seconds is not None and duration_seconds >= 0) else None
@@ -355,6 +398,7 @@ async def list_containers(
     responses={code: {"model": ErrorResponse} for code in (401, 422, 502)},
 )
 async def regenerate_hooks(
+    request: Request,
     container_id: str,
     payload: RegenerateHooksRequest = Body(...),
     auth_user_id: str | None = Depends(get_authenticated_user_id),
@@ -363,6 +407,7 @@ async def regenerate_hooks(
         UUID(container_id)
     except ValueError:
         raise api_error(422, "INVALID_CONTAINER_ID", "container_id must be a UUID.")
+    _enforce_ai_rate_limit(request, auth_user_id)
     ai: AIService = app.state.ai
     try:
         hooks = await ai.regenerate_hooks(payload)

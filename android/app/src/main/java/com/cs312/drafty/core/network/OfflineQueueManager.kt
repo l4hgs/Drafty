@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.util.Log
+import com.cs312.drafty.core.auth.SupabaseAuthManager
 import com.cs312.drafty.data.local.DraftyDao
 import com.cs312.drafty.data.local.PendingVoiceNoteEntity
 import com.cs312.drafty.data.local.toEntity
@@ -96,8 +97,19 @@ class OfflineQueueManager(
         dao.deletePendingVoiceNote(note.id)
     }
 
-    /** Attempts to upload and parse all queued voice notes in FIFO order. */
+    /** Deletes all queued offline audio files and Room rows (called on sign-out to prevent cross-account leaks). */
+    suspend fun clearAll(voiceQueueDir: File) {
+        val pending = dao.getPendingVoiceNotesSnapshot()
+        pending.forEach { note -> runCatching { File(note.audioFilePath).delete() } }
+        runCatching {
+            voiceQueueDir.listFiles()?.forEach { f -> f.delete() }
+        }
+        dao.clearAllPendingVoiceNotes()
+    }
+
+    /** Attempts to upload and parse all queued voice notes in FIFO order (only while signed in). */
     suspend fun flushQueue() {
+        if (SupabaseAuthManager.activeAccessToken.isNullOrBlank()) return
         if (!flushMutex.tryLock()) return
         try {
             val pending = dao.getPendingVoiceNotesSnapshot()
