@@ -803,14 +803,15 @@ fun HomeScreen(vm: DraftyViewModel, onOpenContainer: (String) -> Unit) {
                 vm.signOut()
                 haptics.onPressDown()
             },
-            onSave = { email, brandName, brandVoice ->
+            onSave = { email, brandName, brandVoice, onFinished ->
                 vm.saveUserProfile(email, brandName, brandVoice) { res ->
                     res.onSuccess {
+                        onFinished(null)
                         haptics.onSuccess()
                         toastState.show("Creator profile saved!")
                         showProfileSheet = false
                     }.onFailure { err ->
-                        toastState.show(err.message ?: "Couldn't save your profile right now.")
+                        onFinished(err.message ?: "Couldn't save your profile right now.")
                     }
                 }
             },
@@ -1358,13 +1359,14 @@ private fun CreatorProfileSheet(
     authSession: AuthSession?,
     onDismiss: () -> Unit,
     onSignOut: () -> Unit,
-    onSave: (email: String, brandName: String, brandVoice: String) -> Unit,
+    onSave: (email: String, brandName: String, brandVoice: String, onFinished: (String?) -> Unit) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val accountEmail = authSession?.email?.ifBlank { null } ?: profile.email
     var brandName by remember(profile) { mutableStateOf(profile.brandName) }
     var brandVoice by remember(profile) { mutableStateOf(profile.brandVoicePrompt) }
     var busy by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1406,7 +1408,10 @@ private fun CreatorProfileSheet(
             )
             OutlinedTextField(
                 value = brandName,
-                onValueChange = { brandName = it },
+                onValueChange = {
+                    brandName = it
+                    errorMessage = null
+                },
                 label = { Text("Brand / Creator Name") },
                 placeholder = { Text("e.g. Alex Creates") },
                 singleLine = true,
@@ -1416,7 +1421,10 @@ private fun CreatorProfileSheet(
             )
             OutlinedTextField(
                 value = brandVoice,
-                onValueChange = { brandVoice = it },
+                onValueChange = {
+                    brandVoice = it
+                    errorMessage = null
+                },
                 label = { Text("Brand Voice Prompt (optional)") },
                 placeholder = { Text("e.g. Energetic student tech creator, concise & witty") },
                 minLines = 2,
@@ -1424,6 +1432,13 @@ private fun CreatorProfileSheet(
                 modifier = Modifier.fillMaxWidth(),
                 colors = softFieldColors(),
             )
+            if (errorMessage != null) {
+                Text(
+                    text = errorMessage!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -1442,7 +1457,11 @@ private fun CreatorProfileSheet(
                     enabled = !busy && brandName.isNotBlank(),
                     onClick = {
                         busy = true
-                        onSave(accountEmail, brandName, brandVoice)
+                        errorMessage = null
+                        onSave(accountEmail, brandName, brandVoice) { err ->
+                            busy = false
+                            errorMessage = err
+                        }
                     },
                     leadingIcon = if (!busy) {
                         { PixelCheckIcon(tint = CardSurface, size = 14.dp) }

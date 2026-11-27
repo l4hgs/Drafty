@@ -269,6 +269,7 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
 
     private var currentFile: File? = null
     private var recordingStartedAt = 0L
+    private var peakAmplitude = 0
     private var amplitudeJob: Job? = null
     private var timerJob: Job? = null
     private var processJob: Job? = null
@@ -299,11 +300,14 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
         }
         currentFile = file
         recordingStartedAt = SystemClock.elapsedRealtime()
+        peakAmplitude = 0
         _recordingState.value = RecordingState.Recording(0)
         // Dedicated coroutine for amplitude: it only touches `_amplitude`, which only the waveform collects.
         amplitudeJob = viewModelScope.launch {
             while (isActive) {
-                _amplitude.value = recorder.getMaxAmplitude()
+                val amp = recorder.getMaxAmplitude()
+                _amplitude.value = amp
+                if (amp > peakAmplitude) peakAmplitude = amp
                 delay(80)
             }
         }
@@ -337,12 +341,19 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
     fun stopRecordingAndProcess(userId: String) {
         if (_recordingState.value !is RecordingState.Recording) return
         stopPolling()
+        val finalAmp = recorder.getMaxAmplitude()
+        if (finalAmp > peakAmplitude) peakAmplitude = finalAmp
         val durationMs = SystemClock.elapsedRealtime() - recordingStartedAt
         val file = recorder.stop() // null if missing / <= 1 KB / stop() failed
         currentFile = null
         if (file == null || durationMs < 1_000) {
             file?.delete()
             _recordingState.value = RecordingState.Error("Recording was too short. Hold and speak your idea.")
+            return
+        }
+        if (peakAmplitude < MIN_SPEECH_AMPLITUDE) {
+            file.delete()
+            _recordingState.value = RecordingState.Error("We couldn't hear any speech. Hold Drafty and speak clearly into your mic.")
             return
         }
 
@@ -430,7 +441,9 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
                     brandName = resp.brandName,
                     brandVoicePrompt = resp.brandVoicePrompt,
                 )
-                offlineQueue.flushQueue()
+                viewModelScope.launch(Dispatchers.IO) {
+                    offlineQueue.flushQueue()
+                }
                 onComplete(Result.success(Unit))
             } catch (e: Exception) {
                 Log.e(TAG, "saveUserProfile failed", e)
@@ -576,6 +589,7 @@ class DraftyViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val TAG = "DraftyViewModel"
+        const val MIN_SPEECH_AMPLITUDE = 400
     }
 
     private fun nowIso(): String =
